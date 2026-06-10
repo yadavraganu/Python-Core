@@ -17,8 +17,6 @@ If a class implements the exact names and type signatures defined in a protocol,
 10. [Real-World Examples](#real-world-examples)
 11. [When to Use Protocols](#when-to-use-protocols)
 
----
-
 ## Basic Implementation Pattern
 
 To implement a protocol:
@@ -38,7 +36,6 @@ class Document(Protocol):
         """Expected method"""
         ...
 ```
-
 ### 2. Create Conforming Classes (No Inheritance Needed)
 
 You do not need to inherit from `Document`. You only need to match its structure.
@@ -74,9 +71,6 @@ def print_summary(doc: Document) -> None:
 print_summary(PDFBook("Python Guide", "Hello World"))
 print_summary(WordFile("Notes", "Some text"))
 ```
-
----
-
 ## Advanced Implementation Rules
 
 ### Defining Properties (Read-Only vs. Writable Attributes)
@@ -92,7 +86,6 @@ class UserProfile(Protocol):
     
     email: str  # Writable attribute (must support read AND write)
 ```
-
 ### Generic Protocols
 
 Protocols can be made generic using `typing.Generic` or Python 3.12+'s native generic syntax. This is highly useful for abstracting data structures or repositories.
@@ -120,9 +113,6 @@ class Reader(Protocol):
 class ReadWriter(Reader, Protocol):  # Inherits read(), adds write()
     def write(self, data: bytes) -> None: ...
 ```
-
----
-
 ## Key Features & Runtime Mechanisms
 
 - **Implicit Compliance**: Classes conform to a protocol simply by having matching methods and attributes.
@@ -143,10 +133,7 @@ class Human:
 obj = Human()
 print(isinstance(obj, Greeter))  # Returns True
 ```
-
 **Note:** `@runtime_checkable` only checks for the presence of methods/attributes, not their signatures at runtime.
-
----
 
 ## Python's Built-In Protocols
 
@@ -171,19 +158,14 @@ print_length([1, 2, 3])       # ✓ Works
 print_length("hello")         # ✓ Works
 print_length({"a": 1})        # ✓ Works
 ```
-
----
-
 ## Protocol vs. Abstract Base Class (ABC)
 
 | Feature | Protocol (typing.Protocol) | Abstract Base Class (abc.ABC) |
-|---------|----------------------------|-------------------------------|
+|-|-|-|
 | Typing Style | Structural (Looks like a duck) | Nominal (Named inheritance) |
 | Coupling | Decoupled: Classes don't know the protocol exists. | Tightly Coupled: Classes must explicitly inherit. |
 | Implementation | Cannot contain concrete method code. | Can contain concrete/shared method logic. |
 | Best Case | Third-party libraries, flexible APIs, modern type hints. | Internal frameworks, core shared logic hierarchies. |
-
----
 
 ## Callable Protocols
 
@@ -214,8 +196,6 @@ def apply_transformer(transformer: Transformer, text: str) -> str:
         return transformer.transform(text)
     return text
 ```
-
----
 
 ## Protocol Composition
 
@@ -254,9 +234,6 @@ def process_file(handler: FileHandler) -> None:
     handler.write(content.upper())
     handler.close()
 ```
-
----
-
 ## Structural vs. Nominal Subtyping
 
 ### Nominal Subtyping (Traditional OOP)
@@ -297,19 +274,14 @@ def make_sound(speaker: Speaker) -> None:
 dog = Dog()
 make_sound(dog)  # ✓ Works! Type checker accepts it because structure matches
 ```
-
----
-
 ## Common Pitfalls & Best Practices
-
-### ✅ Best Practices
+### Best Practices
 
 1. **Use Protocols for public APIs** - Allow flexibility in implementations
    ```python
    def save_data(writer: Writer) -> None:
        writer.write(b"data")  # Works with any object that has write()
    ```
-
 2. **Prefer small, focused protocols** - Single responsibility principle
    ```python
    # Good
@@ -319,7 +291,6 @@ make_sound(dog)  # ✓ Works! Type checker accepts it because structure matches
    class Writable(Protocol):
        def write(self, data: bytes) -> None: ...
    ```
-
 3. **Use @runtime_checkable sparingly** - Primarily for static type checking
    ```python
    from typing import Protocol, runtime_checkable
@@ -328,7 +299,6 @@ make_sound(dog)  # ✓ Works! Type checker accepts it because structure matches
    class Drawable(Protocol):
        def draw(self) -> None: ...
    ```
-
 4. **Document protocol requirements clearly**
    ```python
    class Serializable(Protocol):
@@ -340,8 +310,7 @@ make_sound(dog)  # ✓ Works! Type checker accepts it because structure matches
        """
        def to_bytes(self) -> bytes: ...
    ```
-
-### ❌ Common Pitfalls
+### Common Pitfalls
 
 1. **Forgetting @runtime_checkable for isinstance() checks**
    ```python
@@ -349,7 +318,6 @@ make_sound(dog)  # ✓ Works! Type checker accepts it because structure matches
    if isinstance(obj, MyProtocol):
        pass
    ```
-
 2. **Creating overly complex protocols**
    ```python
    # ✗ Too many unrelated methods
@@ -359,7 +327,6 @@ make_sound(dog)  # ✓ Works! Type checker accepts it because structure matches
        def delete(self) -> None: ...
        def compress(self) -> bytes: ...
    ```
-
 3. **Using protocols when ABC is more appropriate**
    ```python
    # ✗ If you need shared implementation
@@ -368,16 +335,12 @@ make_sound(dog)  # ✓ Works! Type checker accepts it because structure matches
            # This won't work in Protocol!
            self.validate()
    ```
-
 4. **Mixing structural and nominal typing inconsistently**
    ```python
    # ✗ Confusing pattern
    class MyClass(SomeProtocol):  # Don't explicitly inherit from Protocol classes
        pass
    ```
-
----
-
 ## Real-World Examples
 
 ### Example 1: Plugin System
@@ -508,28 +471,20 @@ def run_application(logger: Logger) -> None:
 run_application(ConsoleLogger())
 run_application(FileLogger("app.log"))
 ```
-
----
-
 ## When to Use Protocols
-
-### ✅ **Use Protocols when:**
+### **Use Protocols when:**
 - Working with third-party libraries or external code you can't modify
 - Building flexible APIs that accept multiple types
 - Defining interfaces for modern, type-safe Python code
 - You want decoupled, composable type contracts
 - Creating plugin systems or extensible architectures
 - Supporting duck typing with static type checking
-
-### ❌ **Avoid Protocols when:**
+### **Avoid Protocols when:**
 - You need shared implementation logic (use ABC instead)
 - Working with legacy code that doesn't support type hints
 - You require strict runtime enforcement of contracts
 - Creating internal class hierarchies with `isinstance()` checks
 - Simplicity matters more than flexibility
 
----
-
 ## Summary
-
 Python Protocols provide a powerful way to define interfaces using structural typing, allowing for flexible and decoupled code while maintaining strong static type checking. They're especially valuable in modern Python for building extensible systems, working with third-party libraries, and creating APIs that accept any object with the right structure.
