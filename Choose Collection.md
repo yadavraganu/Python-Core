@@ -87,8 +87,6 @@
   – Higher memory footprint (~240 bytes per empty dict) to maintain hash table and handle collisions.
   – Iteration order: insertion-order (Python 3.7+), but **do not rely on this for compatibility**.
 
----
-
 ## Specialized Collections (`collections` Module)
 
 | Type            | Mutability | Order | Lookup/Indexing | Insertion/Append | Best For                        | Avoid When                |
@@ -188,8 +186,6 @@
   – Creation: `_make()` O(n); unpacking O(n).  
   – Iteration: O(n), same as tuple.
 
----
-
 ## Common Pitfalls & Best Practices
 
 ### Mutability & Hashing
@@ -244,8 +240,6 @@
 8. **Need lightweight records with named attributes?**  
    – **Yes:** `namedtuple` (immutable) or `@dataclass` (mutable, more features)  
    – **No:** use dict or class instance
-
----
 
 ## Quick Reference: Memory & Performance
 
