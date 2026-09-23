@@ -184,17 +184,12 @@ shapes = [Square(4), Circle(3)]
 for s in shapes:
     print(s.area())      # same call, different behavior — polymorphism
 ```
-
 Python also supports **duck typing**: "if it walks like a duck and quacks like a duck…" — no explicit type checking is required, only that the object has the needed method.
-
----
 
 # Part III — Abstraction & Composition
 
-## 7. Abstraction (`abc`)
-
+### 7. Abstraction (`abc`)
 Use the `abc` module to define abstract base classes that force subclasses to implement certain methods.
-
 ```python
 from abc import ABC, abstractmethod
 
@@ -211,10 +206,12 @@ class CreditCard(PaymentMethod):
 card = CreditCard()
 card.pay(100)
 ```
+### 8. Composition vs. Inheritance ("has-a" vs "is-a")
 
-## 8. Composition vs. Inheritance ("has-a" vs "is-a")
+#### 8.1 The Core Distinction
 
-Prefer composition when one object *contains* another rather than *is* another — often more flexible than inheritance.
+- **Inheritance ("is-a")** — a `Cat` *is an* `Animal`. The subclass inherits the parent's interface and implementation, and the relationship is fixed at class-definition time.
+- **Composition ("has-a")** — a `Car` *has an* `Engine`. One object holds a reference to another and delegates work to it, and that reference can be swapped at runtime.
 
 ```python
 class Engine:
@@ -226,16 +223,146 @@ class Car:
         self.engine = Engine()        # Car "has-a" Engine
 
     def start(self):
-        return self.engine.start()
+        return self.engine.start()   # delegation: Car forwards the call
 
 car = Car()
 print(car.start())
 ```
 
-## 9. Mixins
+#### 8.2 Why Composition Is Often More Flexible
 
+The example above hard-codes `Engine`. With composition, you can instead **inject** the component, letting the same `Car` work with different engines without touching `Car`'s code at all:
+
+```python
+class ElectricEngine:
+    def start(self):
+        return "Silent electric hum..."
+
+class GasEngine:
+    def start(self):
+        return "Vroom! Engine roaring."
+
+class Car:
+    def __init__(self, engine):
+        self.engine = engine           # dependency injected, not hard-coded
+
+    def start(self):
+        return self.engine.start()
+
+tesla = Car(ElectricEngine())
+mustang = Car(GasEngine())
+print(tesla.start())      # Silent electric hum...
+print(mustang.start())    # Vroom! Engine roaring.
+```
+
+This is the **strategy pattern** in miniature: behavior is swapped by passing in a different object, not by creating a new subclass for every combination.
+
+#### 8.3 Where Inheritance Breaks Down
+
+Inheritance models a rigid, single hierarchy. Problems appear when a "thing" needs to combine behaviors that don't nest cleanly:
+
+```python
+# Awkward: does a FlyingCar inherit from Car or Plane? Both?
+class Car:
+    def drive(self): return "Driving"
+
+class Plane:
+    def fly(self): return "Flying"
+
+class FlyingCar(Car, Plane):   # multiple inheritance gets tangled fast
+    pass
+```
+
+With composition, `FlyingCar` simply *has* the capabilities it needs, with no ambiguity about a "true" parent:
+
+```python
+class FlyingCar:
+    def __init__(self):
+        self.car = Car()
+        self.plane = Plane()
+
+    def drive(self):
+        return self.car.drive()
+
+    def fly(self):
+        return self.plane.fly()
+```
+
+#### 8.4 Composition Enables Runtime Flexibility
+
+Because a composed object is just an attribute, it can be **replaced after construction** — something a fixed inheritance hierarchy can't do:
+
+```python
+car = Car(GasEngine())
+print(car.start())          # Vroom! Engine roaring.
+
+car.engine = ElectricEngine()   # swap the component at runtime
+print(car.start())              # Silent electric hum...
+```
+
+#### 8.5 Aggregation — a Looser Form of Composition
+
+Composition usually implies the container **owns** the component's lifecycle (the `Engine` doesn't outlive the `Car`). **Aggregation** is the looser cousin: the objects are associated, but each can exist independently.
+
+```python
+class Driver:
+    def __init__(self, name):
+        self.name = name
+
+class Car:
+    def __init__(self, driver):
+        self.driver = driver      # Car "uses" a Driver, but doesn't own it
+
+alice = Driver("Alice")
+car = Car(alice)
+# alice existed before the car and can exist after it — aggregation, not ownership
+```
+
+#### 8.6 "Favor Composition Over Inheritance" — the Practical Rule
+
+This well-known design principle doesn't mean *never* use inheritance — it means: reach for composition first, and use inheritance only when there's a genuine, stable "is-a" relationship where the subclass should be substitutable for the parent everywhere (see the Liskov Substitution Principle in Part V).
+
+| Question | Leans toward |
+| --- | --- |
+| Does the relationship ever need to change at runtime? | Composition |
+| Are you inheriting just to reuse a method, not because of a real "is-a" relationship? | Composition |
+| Would multiple inheritance be needed to express it? | Composition (use separate components or mixins) |
+| Is the subclass truly a more specific version of the parent, always substitutable for it? | Inheritance |
+
+#### 8.7 Comparing the Two Side by Side
+
+```python
+# Inheritance approach — tightly coupled, fixed at class definition
+class Bird:
+    def move(self):
+        return "Flying"
+
+class Eagle(Bird):
+    pass
+
+# Composition approach — flexible, swappable at runtime
+class FlyingBehavior:
+    def move(self):
+        return "Flying"
+
+class WalkingBehavior:
+    def move(self):
+        return "Walking"
+
+class Bird:
+    def __init__(self, movement):
+        self.movement = movement
+
+    def move(self):
+        return self.movement.move()
+
+eagle = Bird(FlyingBehavior())
+penguin = Bird(WalkingBehavior())   # no awkward "Penguin(Bird)" that can't fly
+```
+
+The composition version sidesteps a classic OOP trap: a `Penguin(Bird)` subclass that inherits a `fly()` method it can't actually honor — a Liskov Substitution violation. Composing in the right `movement` behavior avoids that problem entirely.
+### 9. Mixins
 A **mixin** is a small class meant to be combined with others via multiple inheritance to add one piece of reusable behavior — it isn't meant to stand alone.
-
 ```python
 class JSONExportMixin:
     def to_json(self):
@@ -254,10 +381,7 @@ class User(JSONExportMixin, ComparableMixin):
 u = User("Ana", 30)
 print(u.to_json())          # {"name": "Ana", "age": 30}
 ```
-
 Mixins keep single-purpose behavior reusable across unrelated class hierarchies without deep inheritance chains.
-
----
 
 # Part IV — Making Classes Feel Native
 
