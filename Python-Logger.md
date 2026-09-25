@@ -136,8 +136,6 @@ time_handler = TimedRotatingFileHandler(
 )
 ```
 
----
-
 ## 8. Multiple Handlers, Different Levels
 
 A single logger can fan out to several destinations at different verbosities — a very common production pattern: everything to a file, only warnings+ to the console.
@@ -165,8 +163,6 @@ logger.debug("Only in file")
 logger.warning("In file AND console")
 ```
 
----
-
 ## 9. Logging Exceptions
 
 Use `logger.exception()` inside an `except` block — it logs at `ERROR` level and automatically includes the traceback:
@@ -185,8 +181,6 @@ Output includes the full traceback. Equivalent to `logger.error("...", exc_info=
 ```python
 logger.critical("Unrecoverable error", exc_info=True)
 ```
-
----
 
 ## 10. Useful Format Attributes
 
@@ -210,8 +204,6 @@ formatter = logging.Formatter(
 )
 ```
 
----
-
 ## 11. Passing Variables Safely (Lazy Formatting)
 
 Prefer `%`-style lazy formatting over f-strings for log calls:
@@ -225,8 +217,6 @@ logger.debug(f"User {user_id} logged in from {ip_address}")
 ```
 
 This matters for performance in hot code paths, since the interpolation is skipped entirely when the message wouldn't be emitted.
-
----
 
 ## 12. Structured / Extra Data
 
@@ -263,8 +253,6 @@ handler = logging.StreamHandler()
 handler.setFormatter(JSONFormatter())
 logger.addHandler(handler)
 ```
-
----
 
 ## 13. Configuring via Dictionary (Recommended for Real Apps)
 
@@ -310,8 +298,6 @@ logger = logging.getLogger("myapp")
 logger.info("Configured via dictConfig")
 ```
 
----
-
 ## 14. Common Pitfalls
 
 - **Attaching handlers more than once.** If a module is imported repeatedly (e.g., in tests or reloaded), `addHandler` can stack duplicate handlers, causing duplicate log lines. Guard with `if not logger.handlers:` or configure logging only once at startup.
@@ -319,8 +305,6 @@ logger.info("Configured via dictConfig")
 - **Forgetting `propagate`.** By default, child loggers propagate to the root logger, which can cause duplicate output if both the child and root have handlers. Set `logger.propagate = False` when a logger has its own handlers and shouldn't also go through the root's.
 - **Using f-strings in log calls.** As noted above, this always formats the string, even if the message won't be logged.
 - **Logging sensitive data.** Passwords, tokens, and PII should never end up in logs — scrub or mask before logging.
-
----
 
 ## 15. Minimal Reusable Setup for a Project
 
@@ -373,8 +357,6 @@ setup_logging()
 logger = logging.getLogger(__name__)
 logger.info("App started")
 ```
-
----
 
 ## 16. Quick Reference Cheat Sheet
 
