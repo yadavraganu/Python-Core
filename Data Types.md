@@ -127,7 +127,7 @@ Not "types" in the numeric-sequence-mapping sense, but frequently tested alongsi
 | `Counter` | `dict` subclass for counting hashable items |
 | `deque` | Double-ended queue, O(1) appends/pops from both ends |
 
-## Mutability Overview
+## 11. Mutability Overview
 
 | Category | Mutable | Immutable |
 |----------|---------|-----------|
@@ -137,7 +137,7 @@ Not "types" in the numeric-sequence-mapping sense, but frequently tested alongsi
 | Numbers | — | `int`, `float`, `complex`, `bool`, `Decimal`, `Fraction` |
 | Special | — | `None`, `NotImplemented`, `Ellipsis`, `Enum` members |
 
-## Type Checking & Conversion
+## 12. Type Checking & Conversion
 
 ```python
 type(obj)                        # exact type
@@ -150,7 +150,7 @@ issubclass(SubCls, BaseCls)      # class-level relationship check
 ### Common Conversions
 `int()`, `float()`, `str()`, `list()`, `tuple()`, `dict()`, `set()`, `frozenset()`, `bool()`, `bytes()`, `bytearray()`, `complex()`
 
-## Key Characteristics by Category
+## 13. Key Characteristics by Category
 
 ### Ordered vs Unordered
 - **Ordered:** `str`, `list`, `tuple`, `range`, `bytes`, `bytearray`, `dict` (3.7+, insertion order — but not "sorted")
@@ -173,7 +173,7 @@ hash([1, 2, 3])      # TypeError: unhashable type: 'list'
 {[1, 2]: "x"}         # TypeError — can't use a list as a dict key
 ```
 
-## Notes & Gotchas
+## 14. Notes & Gotchas
 - **Duck Typing:** Python cares about what an object *can do* (its methods/protocol), not its declared type.
 - **Everything is an object:** functions, classes, and modules all have a `type()`.
 - **`is` vs `==`:** `is` checks identity (same object in memory); `==` checks value equality (calls `__eq__`). Never use `is` to compare numbers or strings for value equality except with singletons like `None`.
