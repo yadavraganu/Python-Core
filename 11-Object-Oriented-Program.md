@@ -159,6 +159,30 @@ C().greet()              # "A" — resolved via Method Resolution Order
 print(C.__mro__)         # (C, A, B, object)
 ```
 Python uses the **C3 linearization algorithm** to compute MRO — left-to-right, depth-first, but consistent.
+
+#### The Diamond Problem, Explicitly
+
+The classic multiple-inheritance issue: if `B` and `C` both inherit from `A`, and `D` inherits from both `B` and `C`, which version of a shared method should `D` use?
+
+```python
+class A:
+    def greet(self): return "A"
+
+class B(A):
+    def greet(self): return "B"
+
+class C(A):
+    def greet(self): return "C"
+
+class D(B, C):
+    pass
+
+print(D().greet())     # "B" — C3 linearization, not naive depth-first
+print(D.__mro__)        # (D, B, C, A, object)
+```
+
+A naive depth-first search (like some older languages use) would visit `A` via `B` *before* even reaching `C`, risking `A` being checked twice or in an inconsistent order across a larger hierarchy. **C3 linearization** guarantees a *consistent, monotonic* ordering — a class always appears before its parents, and the relative order between siblings (`B` before `C`, since that's the order given in `class D(B, C)`) is preserved. If no consistent linearization is possible (contradictory base-class orderings), Python raises `TypeError: Cannot create a consistent method resolution order`.
+
 ### 6. Polymorphism and Duck Typing
 
 Different classes respond to the same method call in their own way.
@@ -206,6 +230,55 @@ class CreditCard(PaymentMethod):
 card = CreditCard()
 card.pay(100)
 ```
+
+#### Abstract Properties
+
+`@abstractmethod` can stack with `@property` — useful when subclasses must provide a value, not just a callable method:
+
+```python
+from abc import ABC, abstractmethod
+
+class Shape(ABC):
+    @property
+    @abstractmethod
+    def area(self):
+        ...
+
+class Square(Shape):
+    def __init__(self, side):
+        self.side = side
+
+    @property
+    def area(self):
+        return self.side ** 2
+
+# Shape()          # TypeError — area is still abstract
+sq = Square(4)
+print(sq.area)      # 16 — accessed like an attribute, not sq.area()
+```
+
+The decorator order matters: `@property` must be the outermost decorator so `Shape.area` is recognized as a property by callers, while `@abstractmethod` marks it as unimplemented underneath.
+
+#### Virtual Subclasses — `ABCMeta.register()`
+
+An ABC can also accept a class as a "virtual subclass" **without** that class inheriting from it at all — `isinstance()`/`issubclass()` checks pass, but no method implementations or MRO slot are inherited. This is a nominal-typing escape hatch for structural-style registration, distinct from the `typing.Protocol` approach used elsewhere in this material.
+
+```python
+from abc import ABC, abstractmethod
+
+class Flyer(ABC):
+    @abstractmethod
+    def fly(self): ...
+
+class Superman:                 # doesn't inherit from Flyer at all
+    def fly(self):
+        return "Up, up, and away!"
+
+Flyer.register(Superman)
+print(issubclass(Superman, Flyer))   # True — registered, not inherited
+print(isinstance(Superman(), Flyer))  # True
+```
+
 ### 8. Composition vs. Inheritance ("has-a" vs "is-a")
 
 #### 8.1 The Core Distinction
@@ -431,6 +504,44 @@ Common dunder methods:
 
 **Note on `__eq__` and `__hash__`:** defining `__eq__` sets `__hash__` to `None` unless you define it too — meaning your objects become unhashable. If instances should be usable in a `set` or as dict keys, define both consistently (equal objects must have equal hashes).
 
+#### Reflected and In-Place Operators
+
+`__add__` only handles `left_operand + right`. Two related families of dunders fill in the rest:
+
+- **Reflected operators** (`__radd__`, `__rmul__`, ...) — Python tries `left.__add__(right)` first; if that returns `NotImplemented` (e.g., `left` doesn't know how to combine with `right`'s type), Python then tries `right.__radd__(left)`. This is what lets `5 + my_vector` work even though `int.__add__` has no idea what a `Vector` is.
+  ```python
+  class Vector:
+      def __init__(self, x): self.x = x
+      def __add__(self, other):
+          if isinstance(other, Vector):
+              return Vector(self.x + other.x)
+          return NotImplemented
+      def __radd__(self, other):     # handles other + self, e.g. 5 + Vector(1)
+          return self.__add__(other)
+  ```
+- **In-place operators** (`__iadd__`, `__imul__`, ...) — back `+=`, `*=`, etc. If undefined, Python falls back to the regular operator plus reassignment (`x = x + y`). Defining `__iadd__` lets you mutate in place instead of creating a new object — important for mutable types where `+=` should modify, not replace (this is exactly why `list += [x]` mutates the original list while `list = list + [x]` creates a new one).
+
+#### `functools.total_ordering` — Less Boilerplate for Comparisons
+
+Implementing every comparison dunder (`__lt__`, `__le__`, `__gt__`, `__ge__`) by hand is repetitive. Supply just `__eq__` and one ordering method, and let the decorator fill in the rest:
+
+```python
+from functools import total_ordering
+
+@total_ordering
+class Money:
+    def __init__(self, amount):
+        self.amount = amount
+    def __eq__(self, other):
+        return self.amount == other.amount
+    def __lt__(self, other):
+        return self.amount < other.amount
+
+# __le__, __gt__, __ge__ are all derived automatically
+print(Money(5) < Money(10))    # True
+print(Money(5) >= Money(10))    # False — derived from __lt__ and __eq__
+```
+
 ## 11. Iterators and Context Managers
 
 ### The iterator protocol
@@ -488,6 +599,27 @@ class Point:
 p = Point(1, 2)
 print(p)             # Point(x=1, y=2) — __repr__ generated automatically
 ```
+
+`@dataclass` also generates `__eq__` (comparing all fields) for free, and takes options for common needs:
+
+```python
+from dataclasses import dataclass, field
+
+@dataclass(frozen=True, order=True)   # frozen = immutable; order = adds comparison dunders
+class Point:
+    x: int
+    y: int
+
+p1, p2 = Point(1, 2), Point(1, 3)
+print(p1 < p2)         # True — compares field tuples (1, 2) < (1, 3)
+# p1.x = 99            # FrozenInstanceError — frozen=True blocks mutation
+
+@dataclass
+class Cart:
+    items: list = field(default_factory=list)   # NOT items=[] — same mutable-default trap as functions
+```
+
+`field(default_factory=list)` is required instead of a bare `items: list = []` for exactly the same reason `def f(x=[])` is a bug in regular functions — a plain mutable default would be created once and shared across every instance.
 
 ### `__slots__` — restrict attributes, save memory
 
@@ -738,7 +870,30 @@ From highest to lowest priority when resolving `instance.attr`:
 3. Non-data descriptor or plain class attribute on the class/MRO (methods, `@classmethod`, `@staticmethod`, plain values)
 4. `__getattr__` (only if all the above fail)
 
-## 17. A Glimpse of Metaclasses
+## 17. `__init_subclass__` — A Lighter Alternative to Metaclasses
+
+Before reaching for a metaclass, check whether `__init_subclass__` covers the need. It's a classmethod, implicitly defined via `object`, that Python calls automatically **whenever a subclass is created** — no metaclass required.
+
+```python
+class Plugin:
+    registry = []
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        Plugin.registry.append(cls)    # auto-register every subclass on creation
+
+class AudioPlugin(Plugin):
+    pass
+
+class VideoPlugin(Plugin):
+    pass
+
+print(Plugin.registry)   # [<class 'AudioPlugin'>, <class 'VideoPlugin'>]
+```
+
+This solves a large fraction of the problems people traditionally used metaclasses for — plugin registries, validating subclass structure, injecting shared setup — with far simpler syntax and no risk of metaclass-conflict errors when combined with other base classes. Reach for `__init_subclass__` first; drop to a real metaclass only if you specifically need to control class *creation itself* (e.g., altering the namespace before the class object exists, as in the `UpperAttrMeta` example below).
+
+## 18. A Glimpse of Metaclasses
 
 A **metaclass** is "the class of a class" — it controls how classes themselves are created, the same way a class controls how instances are created. `type` is the default metaclass for every class in Python.
 
@@ -772,6 +927,8 @@ Metaclasses are powerful but rarely needed directly — frameworks like Django (
 4. **Overusing inheritance** where composition would be simpler and more flexible ("favor composition over inheritance").
 5. **Comparing with `==` after defining `__eq__` but not `__hash__`** — makes instances unhashable, breaking use in sets/dicts.
 6. **Confusing `@staticmethod` and `@classmethod`** — use `@classmethod` when you need the class itself (e.g., alternate constructors), `@staticmethod` when you don't need `self` or `cls` at all.
+7. **`@dataclass` mutable defaults** — `items: list = []` fails at class-definition time in a dataclass (it explicitly rejects bare mutable defaults); use `field(default_factory=list)` instead.
+8. **Reaching for a metaclass by default** — most "customize class creation" needs are better served by `__init_subclass__` or a simple class decorator; save metaclasses for when you truly need to intercept the class object's creation itself.
 
 ## Practice Exercises
 
@@ -803,3 +960,9 @@ Metaclasses are powerful but rarely needed directly — frameworks like Django (
 | Custom exceptions | `class MyError(Exception):` |
 | Descriptor | `__get__`, `__set__`, `__delete__` |
 | Metaclass | `class Meta(type):` |
+| Class-creation hook (lighter than metaclass) | `__init_subclass__` |
+| Reflected operator | `__radd__`, `__rmul__`, etc. |
+| In-place operator | `__iadd__`, `__imul__`, etc. |
+| Fill in comparison dunders | `@functools.total_ordering` |
+| Virtual subclass (no inheritance) | `ABCMeta.register()` |
+| Immutable / auto-ordered dataclass | `@dataclass(frozen=True, order=True)` |
