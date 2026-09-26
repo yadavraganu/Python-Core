@@ -2,7 +2,7 @@
 
 A comprehensive learning resource covering core Python concepts and advanced programming techniques.
 
-## 📚 Contents
+## Contents
 
 This repository contains detailed markdown guides covering the following topics:
 
@@ -47,7 +47,7 @@ This repository contains detailed markdown guides covering the following topics:
 - **[22-pytest.md](22-pytest.md)** - Unit testing framework and test-driven development
 - **[23-CPython-Object-Model.md](23-CPython-Object-Model.md)** - Deep dive into Python's object model
 
-## 🎯 Purpose
+## Purpose
 
 This repository serves as a structured learning path for:
 - Intermediate to advanced Python developers
@@ -55,7 +55,7 @@ This repository serves as a structured learning path for:
 - Students preparing for technical interviews
 - Anyone seeking reference material on core Python concepts
 
-## 💡 How to Use
+## How to Use
 
 1. Start with the fundamentals (topics 01-05) if you're new to these concepts
 2. Progress through data structures and modules (topics 06-07)
@@ -64,7 +64,7 @@ This repository serves as a structured learning path for:
 5. Study concurrency patterns (topics 19-20)
 6. Review testing and logging practices (topics 21-22)
 
-## 🚀 Getting Started
+## Getting Started
 
 Clone this repository to access all the guides:
 
@@ -75,22 +75,12 @@ cd Python-Core
 
 Each markdown file can be read directly on GitHub or in your favorite markdown viewer.
 
-## 📝 Notes
+## Notes
 
 - Each guide includes explanations, examples, and key takeaways
 - Topics are ordered from basic to advanced concepts
 - Files are independent but may reference related topics
 
-## 🤝 Contributing
+## Contributing
 
 Feel free to fork this repository and suggest improvements or additional content.
-
-## 📄 License
-
-This repository is open source and available under the MIT License.
-
----
-
-**Last Updated:** September 2026
-
-For questions or discussions, feel free to open an issue or start a discussion in the repository.
