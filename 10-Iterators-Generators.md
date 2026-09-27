@@ -218,8 +218,6 @@ list(itertools.islice(itertools.count(), 5))    # [0, 1, 2, 3, 4] — slice an i
 
 `itertools.count()`/`cycle()` are only usable at all *because* generators are lazy — a truly infinite list could never be built, but a truly infinite generator costs no memory since it only ever holds its current state.
 
----
-
 ## 6. Common Pitfalls & Gotchas
 
 ### Iterators/Generators Are Exhausted After One Full Pass
@@ -255,7 +253,6 @@ it = iter(x)
 print(isinstance(it, Iterator))   # True
 ```
 Using `collections.abc.Iterable`/`Iterator` for `isinstance` checks is more robust and idiomatic than manually checking for `__iter__`/`__next__` with `hasattr`.
-
 
 ## Notes & Gotchas
 
