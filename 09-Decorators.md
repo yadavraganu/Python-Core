@@ -35,7 +35,6 @@ decorated_func()
 ```
 
 **Output:**
-
 ```
 I am being decorated!
 I am an ordinary function.
@@ -50,7 +49,6 @@ The `@` symbol is just a shortcut (syntactic sugar) for the manual process above
 def ordinary_function():
     print("I am an ordinary function.")
 
-# This is now our decorated function
 ordinary_function()
 ```
 
@@ -58,51 +56,32 @@ This code does *exactly* the same thing as the manual example. The `@make_pretty
 
 ### Making Decorators Useful (Arguments & Return Values)
 
-The first example was simple, but most functions take arguments and return values. Our decorator needs to handle this.
+Most functions take arguments and return values — the decorator needs to handle both.
 
-#### Problem 1: Arguments
+**Problem 1 — Arguments:** if `ordinary_function` takes an argument, `wrapper` needs to accept it too. Use `*args`/`**kwargs` to accept *any* signature.
 
-What if `ordinary_function` takes an argument? Our `wrapper` doesn't. We use `*args` and `**kwargs` to accept *any* arguments.
+**Problem 2 — Return Values:** if `ordinary_function` returns a value, `wrapper` must capture and return it — otherwise the decorated function silently returns `None`.
 
-#### Problem 2: Return Values
-
-What if `ordinary_function` returns a value? Our `wrapper` needs to capture and return it.
-
-#### Problem 3: Metadata
-
-When you decorate a function, it loses its original "identity" (like its name and docstring).
-
-  * `ordinary_function.__name__` would become `'wrapper'`.
-    We fix this using **`functools.wraps`**.
+**Problem 3 — Metadata:** a decorated function loses its original identity — `ordinary_function.__name__` becomes `'wrapper'`. Fix with **`functools.wraps`**.
 
 #### The "Proper" Decorator Template
 
-Here is a practical, reusable decorator template that solves all these problems. Let's make a `timer_decorator` to time how long a function takes.
-
 ```python
 import time
-from functools import wraps # Import wraps
+from functools import wraps
 
 def timer_decorator(func):
     """A decorator that prints the time a function takes to run."""
-    
-    # 3. Use @wraps to preserve function metadata
-    @wraps(func)
-    
-    # 1. Use *args and **kwargs to accept any arguments
-    def wrapper(*args, **kwargs):
+
+    @wraps(func)                      # 3. preserve function metadata
+    def wrapper(*args, **kwargs):     # 1. accept any arguments
         start_time = time.perf_counter()
-        
-        # 2. Capture and return the original function's return value
-        value = func(*args, **kwargs)
-        
+        value = func(*args, **kwargs)  # 2. capture and return the value
         end_time = time.perf_counter()
         run_time = end_time - start_time
         print(f"Finished {func.__name__!r} in {run_time:.4f} secs")
         return value
     return wrapper
-
-# --- Using the decorator ---
 
 @timer_decorator
 def complex_calculation(num1, num2):
@@ -110,116 +89,151 @@ def complex_calculation(num1, num2):
     time.sleep(1)
     return num1 + num2
 
-# Call the decorated function
 result = complex_calculation(10, 5)
 print(f"Function result: {result}")
-
-# Thanks to @wraps, the metadata is correct!
-print(f"Function name: {complex_calculation.__name__}")
+print(f"Function name: {complex_calculation.__name__}")       # correct, thanks to @wraps
 print(f"Function docstring: {complex_calculation.__doc__}")
 ```
 
 **Output:**
-
 ```
 Finished 'complex_calculation' in 1.0005 secs
 Function result: 15
 Function name: complex_calculation
 Function docstring: A function that 'sleeps' to simulate work.
 ```
+
+**What `@wraps` actually does under the hood:** it copies `__name__`, `__doc__`, `__module__`, and `__dict__` from the original function onto the wrapper, and also sets `wrapper.__wrapped__ = func` — a direct reference to the original, unwrapped function. This is what lets tools like `inspect.signature()` and `help()` see through the wrapper to the real signature, and it's how you'd manually "unwrap" a decorated function if you ever needed the original back.
+
 ### Decorators with Arguments
 
-What if you want to pass arguments *to the decorator itself*?
-For example, `@repeat(num_times=3)` or `@check_permission(role="admin")`.
+To pass arguments *to the decorator itself* (e.g., `@repeat(num_times=3)`), you need **one extra layer**:
 
-This requires **one extra layer** of functions.
-
-1.  An outer function that accepts the decorator's arguments (e.g., `num_times=3`).
-2.  This function returns the *actual decorator*.
-3.  The decorator returns the *wrapper*.
+1. An outer function that accepts the decorator's arguments.
+2. It returns the *actual decorator*.
+3. That decorator returns the *wrapper*.
 
 It's a "function factory" that builds a decorator.
-
-#### Example: `@repeat(num_times=N)`
-
-Let's build a decorator that runs a function `N` times.
 
 ```python
 from functools import wraps
 
-# 1. Outer function accepts decorator's arguments
-def repeat(num_times):
-    
-    # 2. This is the actual decorator
-    def decorator_repeat(func):
+def repeat(num_times):                  # 1. outer function accepts decorator args
+    def decorator_repeat(func):          # 2. the actual decorator
         @wraps(func)
-        
-        # 3. This is the wrapper, as before
-        def wrapper(*args, **kwargs):
+        def wrapper(*args, **kwargs):     # 3. the wrapper, as before
             results = []
             for _ in range(num_times):
-                result = func(*args, **kwargs)
-                results.append(result)
-            return results # Or return the last result, etc.
+                results.append(func(*args, **kwargs))
+            return results
         return wrapper
-    
-    return decorator_repeat # Return the decorator
-
-# --- Using the decorator ---
+    return decorator_repeat
 
 @repeat(num_times=3)
 def greet(name):
     print(f"Hello, {name}!")
     return name
 
-# Call the decorated function
 greet("Alice")
 ```
 
 **Output:**
-
 ```
 Hello, Alice!
 Hello, Alice!
 Hello, Alice!
 ```
 
-**How it works:**
+**How it works:** `@repeat(num_times=3)` runs first and returns `decorator_repeat`; Python then effectively applies `@decorator_repeat` to `greet`.
 
-1.  `@repeat(num_times=3)` is called.
-2.  The outer `repeat(num_times=3)` function runs and returns `decorator_repeat`.
-3.  Python then effectively does `@decorator_repeat`, which decorates `greet`.
+### Stacking Multiple Decorators
 
-### Class-Based Decorators
+Decorators can be chained — a very common "predict the output" interview question, since **order matters**.
 
-You can also use a class to build a decorator. This is most useful when you need to **maintain state** between function calls.
+```python
+def bold(func):
+    def wrapper(*args, **kwargs):
+        return f"<b>{func(*args, **kwargs)}</b>"
+    return wrapper
 
-A class-based decorator works by implementing two methods:
+def italic(func):
+    def wrapper(*args, **kwargs):
+        return f"<i>{func(*args, **kwargs)}</i>"
+    return wrapper
 
-  * `__init__(self, func)`: Receives the function to be decorated (runs once at decoration time).
-  * `__call__(self, *args, **kwargs)`: Makes the class instance *callable*. This method runs *every time* the decorated function is called.
+@bold
+@italic
+def greet():
+    return "Hello"
 
-#### Example: `CountCalls`
+print(greet())   # <b><i>Hello</i></b>
+```
 
-Let's build a decorator that counts how many times a function has been called.
+**Reading order:** decorators are **applied bottom-up but execute outside-in**.
+- `@bold` / `@italic` stacked on `greet` is equivalent to `greet = bold(italic(greet))`.
+- So `italic` wraps `greet` first (closest to the function), and `bold` wraps the *result* of that.
+- At **call time**, execution goes the other way: `bold`'s wrapper runs first (prints/does its "before" logic first), then calls into `italic`'s wrapper, which calls the real `greet`.
+
+Swapping the order (`@italic` above `@bold`) changes the output to `<i><b>Hello</b></i>` — this exact swap is a classic interview trick question.
+
+### Decorating Methods (Instance Methods)
+
+A decorator applied to a method needs its wrapper to also accept `self` (via `*args` typically handles this transparently, since `self` just becomes `args[0]`):
+
+```python
+def log_call(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):   # self flows through args automatically
+        print(f"Calling {func.__name__}")
+        return func(*args, **kwargs)
+    return wrapper
+
+class Greeter:
+    @log_call
+    def greet(self, name):
+        return f"Hi, {name}"
+```
+
+Using `*args, **kwargs` (rather than writing `def wrapper(self, ...)` explicitly) is exactly why the same decorator works transparently on both plain functions and methods — the wrapper doesn't need to know or care whether the first argument is `self`.
+
+### Class Decorators (Decorating a Class Itself)
+
+Distinct from a *class-based decorator* (below, which uses a class to build a decorator for functions) — this is a decorator applied directly to a **class definition**, to modify or register the class itself.
+
+```python
+def add_greeting(cls):
+    cls.greeting = "Hello from a class decorator!"
+    return cls
+
+@add_greeting
+class Widget:
+    pass
+
+print(Widget.greeting)   # "Hello from a class decorator!"
+```
+
+This is exactly how `@dataclass` works — it takes a plain class, inspects its type-annotated attributes, and injects generated methods (`__init__`, `__repr__`, `__eq__`) directly onto the class before returning it.
+
+### Class-Based Decorators (Using a Class to Decorate a Function)
+
+Most useful when you need to **maintain state** between calls. Implemented with two methods:
+
+  * `__init__(self, func)` — receives the function to decorate (runs once, at decoration time).
+  * `__call__(self, *args, **kwargs)` — makes the instance callable; runs on *every call* of the decorated function.
 
 ```python
 from functools import update_wrapper
 
 class CountCalls:
-    # 1. Runs once when decorating
     def __init__(self, func):
-        update_wrapper(self, func) # Helps preserve metadata
+        update_wrapper(self, func)   # preserve metadata (the class-based equivalent of @wraps)
         self.func = func
-        self.num_calls = 0 # This is our "state"
-        
-    # 2. Runs every time the decorated function is called
+        self.num_calls = 0            # persistent state
+
     def __call__(self, *args, **kwargs):
         self.num_calls += 1
         print(f"Call {self.num_calls} of {self.func.__name__!r}")
         return self.func(*args, **kwargs)
-
-# --- Using the decorator ---
 
 @CountCalls
 def say_hello():
@@ -231,7 +245,6 @@ say_hello()
 ```
 
 **Output:**
-
 ```
 Call 1 of 'say_hello'
 Hello!
@@ -241,16 +254,44 @@ Call 3 of 'say_hello'
 Hello!
 ```
 
-The `self.num_calls` variable is the *state* that persists between calls. This is much cleaner than using a global variable.
+`self.num_calls` is the state that persists between calls — cleaner than a `global` variable, and each differently-decorated function gets its own independent counter automatically (each `@CountCalls` application creates a separate instance).
+
+### A Closer Look: `functools.lru_cache`
+
+Python's built-in memoization decorator, referenced often but worth seeing directly:
+
+```python
+from functools import lru_cache
+
+@lru_cache(maxsize=128)
+def fib(n):
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+fib(30)          # fast — cached subcalls avoid exponential recomputation
+print(fib.cache_info())   # CacheInfo(hits=28, misses=31, maxsize=128, currsize=31)
+```
+
+- **`maxsize`** — how many distinct argument combinations to remember; `maxsize=None` means unbounded cache.
+- **Arguments must be hashable** — calling `fib([1,2])` with a list raises `TypeError`, since the cache is keyed by the arguments.
+- **`.cache_info()`** and **`.cache_clear()`** are added automatically — useful for debugging cache effectiveness or resetting state (e.g., between test cases).
+- Turns naive recursive Fibonacci from exponential to linear time — a frequent live-coding follow-up after writing the recursive version.
 
 ### Common Use Cases
 
-You see decorators all the time in Python:
+  * **Logging** — as in `timer_decorator`, for tracking calls, arguments, and return values.
+  * **Authentication & Authorization** — `@login_required` or `@permission_required` in frameworks like Flask/Django.
+  * **Caching / Memoization** — `@functools.lru_cache`, shown above.
+  * **Rate Limiting** — restricting how often a function (like an API endpoint) can be called.
+  * **Registering Functions** — frameworks like `pytest` (`@pytest.fixture`) use decorators to register functions in a central registry.
+  * **Built-in decorators you already use constantly** — `@property`, `@staticmethod`, and `@classmethod` are themselves decorators (in fact, descriptor-producing ones); worth connecting this material back to those, since the mechanism is identical — a callable that wraps another callable and returns something new.
 
-  * **Logging:** As seen in the `timer_decorator`, used for logging function calls, arguments, and return values.
-  * **Authentication & Authorization:** In web frameworks like Flask or Django, you use decorators like `@login_required` or `@permission_required` to protect routes.
-  * **Caching / Memoization:** Storing the results of expensive function calls. Python's built-in **`@functools.lru_cache`** is a powerful decorator for this.
-  * **Rate Limiting:** Restricting how often a function (like an API endpoint) can be called.
-  * **Registering Functions:** Some frameworks (like `pytest` with `@pytest.fixture`) use decorators to register functions in a central registry.
+## Notes & Gotchas
 
-Would you like to dive deeper into a specific example, such as how `@functools.lru_cache` works or how to build an `@login_required` decorator?
+- **"Applied bottom-up, executed outside-in"** is the precise way to describe stacked decorator order — memorize this phrasing, since "predict the output" questions with 2+ stacked decorators are extremely common.
+- **Always use `@wraps(func)`** — forgetting it is a common code-review flag; without it, `__name__`, `__doc__`, and introspection tools all report the wrapper's identity instead of the original function's.
+- **A decorator without `*args, **kwargs` in its wrapper only works on functions matching that exact fixed signature** — this is why nearly every general-purpose decorator template uses `*args, **kwargs` rather than hardcoding parameters.
+- **`lru_cache` requires hashable arguments** — a very common "why did my cached function break" bug when someone passes a list or dict.
+- **A class-based decorator's `__init__` runs once, at decoration time; `__call__` runs on every invocation** — mixing these up is a common source of "why is my counter/state wrong" bugs (e.g., accidentally resetting state inside `__call__`).
+- **Class decorators (on a `class` statement) vs. class-based decorators (a class implementing `__call__` to decorate a function) are easy to conflate by name** — but they're solving different problems: one modifies/wraps a class, the other uses a class as the *mechanism* for decorating a function.
