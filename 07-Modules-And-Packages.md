@@ -269,73 +269,204 @@ print(__doc__)        # the module's top-level docstring, if any
 print(__package__)    # the package this module belongs to (or None/'' for top-level scripts)
 ```
 
-## 8. Modern Packaging with `pyproject.toml`
+## 8. Packaging Your Code — Step-by-Step Guide
 
-To share a package with other developers or publish to PyPI, modern Python standards use a `pyproject.toml` at the project root instead of the older `setup.py`.
+Goal: turn the `shop` package into something anyone can `pip install`. Modern packaging is driven by a single `pyproject.toml` file (replacing the older `setup.py`), plus a **build backend** that turns your source into installable files.
 
-### Project Layout
+**Terminology first (a common source of confusion):**
+- **Distribution name**: what you `pip install` (e.g., `my-custom-shop-pkg`), set by `name` in `pyproject.toml`.
+- **Import name**: what you `import` (e.g., `shop`), determined by the folder under `src/`.
+- They don't have to match, but keeping them close makes life easier. Names must also be **unique on PyPI**, so check availability before committing to one.
+
+### Step 1 — Create the Project Layout
+
 ```
 my_shared_package/
-├── pyproject.toml
-├── README.md
-└── src/
-    └── shop/
-        ├── __init__.py
-        └── billing.py
+├── pyproject.toml          # project metadata + build configuration
+├── README.md               # shown on the PyPI page
+├── LICENSE                 # your license text
+├── src/
+│   └── shop/               # the importable package
+│       ├── __init__.py
+│       ├── __main__.py     # optional: enables `python -m shop`
+│       └── billing.py
+└── tests/
+    └── test_billing.py
 ```
 
-### Example `pyproject.toml`
+**Why the `src/` layout?** With `src/`, your package is *not* importable from the project root by accident, so tests run against the **installed** package instead of the loose source folder. That catches packaging mistakes (a missing file, a wrong path) before your users do.
+
+### Step 2 — Create and Activate a Virtual Environment
+
+Isolate this project's dependencies so they don't collide with other projects or your system Python:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+python -m pip install --upgrade pip
+```
+
+### Step 3 — Write the Package Code
+
+```python
+# src/shop/__init__.py
+from .billing import create_invoice
+
+__all__ = ["create_invoice"]
+__version__ = "1.0.0"
+```
+```python
+# src/shop/billing.py
+def create_invoice():
+    return "Invoice created"
+```
+
+### Step 4 — Write `pyproject.toml`
+
 ```toml
 [build-system]
-requires = ["setuptools>=77.0.0"]
-build-backend = "setuptools.build_meta"
+requires = ["setuptools>=77.0.0"]        # what pip installs to build your project
+build-backend = "setuptools.build_meta"   # which backend does the building
 
 [project]
-name = "my_custom_shop_pkg"
+name = "my-custom-shop-pkg"              # the DISTRIBUTION name (what users pip install)
 version = "1.0.0"
-authors = [
-    { name="Your Name", email="you@example.com" }
-]
 description = "An ecommerce utility package"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "MIT"                 # SPDX expression (PEP 639); replaces the old license classifier
-classifiers = [
-    "Programming Language :: Python :: 3",
-]
-dependencies = [
-    "requests>=2.28.0"  # Third party requirements go here
-]
+license = "MIT"                           # SPDX expression (PEP 639)
+authors = [{ name = "Your Name", email = "you@example.com" }]
+classifiers = ["Programming Language :: Python :: 3"]
+dependencies = ["requests>=2.28.0"]       # runtime dependencies
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "build", "twine"]     # installed with: pip install -e ".[dev]"
+
+[project.scripts]
+shop-cli = "shop.__main__:main"           # creates a `shop-cli` command on install
+
+[project.urls]
+Homepage = "https://github.com/you/my-custom-shop-pkg"
 
 [tool.setuptools.packages.find]
-where = ["src"]  # Tells build tools to look inside the src directory
+where = ["src"]                           # look for packages inside src/
 ```
 
-**Notes on this example:**
-- The version numbers are illustrative; check current guidance for your build backend. Setuptools is only one option, and `hatchling`, `flit-core`, and `poetry-core` are common alternatives, all selected through the same `[build-system]` table (PEP 517/518).
-- `license = "MIT"` (an SPDX expression, PEP 639) is the newer style and needs a recent setuptools; older projects still use the `License ::` classifier you'll see in the wild.
-- **Why the `src/` layout?** With `src/`, your package isn't importable from the project root by accident, so tests run against the *installed* package rather than the loose source folder. That catches packaging mistakes (a missing file, a forgotten `__init__.py`) before users do.
+What each part does:
+- **`[build-system]`**: names the backend (PEP 517/518). Setuptools is one option; `hatchling`, `flit-core`, and `poetry-core` work through the same table, so swapping backends doesn't change the rest of your file.
+- **`[project]`**: standard metadata (PEP 621), understood by every backend and tool.
+- **`dependencies`** vs **`optional-dependencies`**: the first is installed for every user; the second is opt-in extras like dev tools.
+- **`[project.scripts]`**: turns `shop.__main__:main` into a real command-line program on the user's PATH.
+- Version numbers here are illustrative; check current guidance for your backend.
 
-To build distributable files (`.tar.gz` and `.whl`):
+*Optional, single-source the version:* instead of repeating `1.0.0` in two places, declare it dynamic and let setuptools read it from the package:
+```toml
+[project]
+dynamic = ["version"]        # and delete the static `version = ...` line
+
+[tool.setuptools.dynamic]
+version = { attr = "shop.__version__" }
+```
+
+### Step 5 — Install in Editable Mode and Try It
+
 ```bash
-pip install build
+pip install -e ".[dev]"
+python -c "import shop; print(shop.__version__)"
+shop-cli
+```
+An **editable install** links your source folder into the environment, so code edits take effect immediately with no reinstall. If `import shop` works from *any* directory, your package layout and config are correct.
+
+### Step 6 — Run Your Tests
+
+```bash
+pytest
+```
+Because of the `src/` layout, these tests exercise the installed package, which is exactly what your users will get.
+
+### Step 7 — Build the Distribution Files
+
+```bash
 python -m build
 ```
+This creates a `dist/` folder containing two artifacts:
 
-### Virtual Environments — Isolating Dependencies
+| File | Type | What it is |
+|---|---|---|
+| `my_custom_shop_pkg-1.0.0.tar.gz` | **sdist** (source distribution) | Your source plus metadata; pip must run the build backend to install it |
+| `my_custom_shop_pkg-1.0.0-py3-none-any.whl` | **wheel** (built distribution) | A pre-built zip that pip installs directly, so it's fast and needs no build step |
 
-Before installing anything with `pip`, real projects isolate dependencies per-project using a virtual environment, so packages for one project don't collide with or pollute another's:
+Reading the wheel filename: `name-version-pythontag-abitag-platformtag`. `py3-none-any` means **pure Python**, working on any OS and any Python 3. Packages with compiled C extensions produce platform-specific wheels instead. Publish **both** files: pip prefers the wheel and falls back to the sdist.
+
+### Step 8 — Inspect and Validate the Artifacts
 
 ```bash
-python -m venv .venv          # create an isolated environment in .venv/
-source .venv/bin/activate      # activate it (Windows: .venv\Scripts\activate)
-pip install -r requirements.txt
+python -m zipfile -l dist/*.whl      # list what actually got packaged
+tar tf dist/*.tar.gz                  # list the sdist contents
+twine check dist/*                    # validates metadata and the README rendering
 ```
+Look for missing files (e.g., data files, which need extra config; see the pitfalls below) *before* uploading anything.
 
-For local development on your own package (so edits take effect without reinstalling), use an **editable install**:
+### Step 9 — Test the Built Wheel in a Clean Environment
+
 ```bash
-pip install -e .
+python -m venv /tmp/verify-env
+source /tmp/verify-env/bin/activate
+pip install dist/*.whl
+python -c "import shop; print(shop.create_invoice())"
 ```
+This proves the wheel works **without** your source tree or dev environment lying around.
+
+### Step 10 — Publish to TestPyPI First (a Safe Rehearsal)
+
+1. Create accounts on [test.pypi.org](https://test.pypi.org) and [pypi.org](https://pypi.org) (separate accounts) and enable 2FA.
+2. Create an **API token** on TestPyPI.
+3. Upload:
+```bash
+twine upload --repository testpypi dist/*
+# username: __token__
+# password: <your API token, including the pypi- prefix>
+```
+4. Install it back from TestPyPI to verify:
+```bash
+pip install --index-url https://test.pypi.org/simple/ \
+            --extra-index-url https://pypi.org/simple/ my-custom-shop-pkg
+```
+The `--extra-index-url` matters: your dependencies (like `requests`) live on the real PyPI, not TestPyPI.
+
+### Step 11 — Publish to the Real PyPI
+
+```bash
+twine upload dist/*
+```
+Then `pip install my-custom-shop-pkg` works for anyone in the world.
+
+**Important:** PyPI **never lets you re-upload a version**, even after deleting it. A mistake means bumping the version number, so the TestPyPI rehearsal is worth the extra minute.
+
+**Better than long-lived tokens:** use **Trusted Publishing**. You register your GitHub repository and workflow with PyPI, and the release workflow gets a short-lived credential automatically through OIDC (typically via the `pypa/gh-action-pypi-publish` action), so there's no secret token to store or leak.
+
+### Step 12 — Releasing Updates
+
+1. Bump the version (follow **semantic versioning**: `MAJOR.MINOR.PATCH`, where a breaking change bumps MAJOR, a new feature bumps MINOR, and a fix bumps PATCH). Pre-releases look like `1.1.0rc1` (PEP 440).
+2. Commit and tag the release in git (`git tag v1.1.0`).
+3. **Delete the old `dist/` folder** (`rm -rf dist/`), or you'll re-upload stale files.
+4. Rebuild (`python -m build`), check (`twine check dist/*`), and upload.
+
+### Tooling Alternatives
+
+The steps above use the standard, backend-agnostic tools (`build` + `twine`), so they work everywhere. All-in-one tools wrap the same workflow: **`uv`** (`uv build`, `uv publish`), **Hatch** (`hatch build`, `hatch publish`), and **Poetry** (`poetry build`, `poetry publish`). Knowing the underlying steps makes any of them easy to pick up.
+
+### Common Packaging Pitfalls
+
+| Symptom | Likely cause and fix |
+|---|---|
+| `ModuleNotFoundError` after installing your own package | The `[tool.setuptools.packages.find] where = ["src"]` setting is missing or the folder layout doesn't match |
+| Works in your repo, breaks for users | You tested against loose source instead of the installed package (the reason for `src/` layout and Step 9) |
+| Non-`.py` files (templates, JSON, data) missing from the wheel | They aren't included by default; declare them, e.g. `[tool.setuptools.package-data] shop = ["data/*.json"]` |
+| `400 File already exists` on upload | That version was already published; bump the version and rebuild |
+| Old code uploaded after a rebuild | Stale files in `dist/`; clear it before building |
+| `pip install` name differs from `import` name | Expected: distribution name and import name are separate (`pip install pillow` → `import PIL`) |
+| Secrets committed to git | Never commit API tokens; use Trusted Publishing or CI secrets, and keep `dist/` and `.venv/` in `.gitignore` |
 
 ## 9. Common Troubleshooting Guide
 
@@ -478,3 +609,7 @@ This is the standard way to ship a command-line entry point inside a package, an
 - **Importing a submodule runs every parent package's `__init__.py` first**, so `import shop.delivery.tracking` executes `shop/__init__.py`, then `shop/delivery/__init__.py`, then `tracking.py`.
 - **`python -m package` needs a `__main__.py`**, and running with `-m` (rather than by file path) is what makes relative imports work.
 - **Prefer an editable install over editing `sys.path`** to make your own package importable during development.
+- **Distribution name vs import name:** `pip install my-custom-shop-pkg` and `import shop` are independent (think `pip install pillow` / `import PIL`).
+- **sdist vs wheel:** an sdist is source that needs a build step at install time; a wheel is pre-built and installs directly. Publish both, and pip prefers the wheel.
+- **PyPI versions are immutable**: you can never re-upload a version, so rehearse on TestPyPI and bump the version to fix a bad release.
+- **`pyproject.toml` separates three concerns:** `[build-system]` (how to build), `[project]` (metadata and dependencies), and `[tool.*]` (backend/tool settings).
