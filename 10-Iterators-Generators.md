@@ -1,5 +1,3 @@
-# Python Iterators & Generators
-
 ## 1. Iterables vs. Iterators — The Core Distinction
 
 These two terms get used interchangeably in casual conversation but mean precisely different things — a very common opening interview question.
@@ -18,6 +16,8 @@ print(next(it))   # raises StopIteration — exhausted
 ```
 
 **Key distinction to state clearly if asked:** every iterator is an iterable (its `__iter__` just returns `self`), but not every iterable is an iterator — a `list` is iterable but has no `__next__`, so `next(nums)` raises `TypeError`. This asymmetry is exactly why you can loop over the same list twice but can't loop over the same *exhausted* iterator once.
+
+<br></br>
 
 ### The Iterator Protocol
 
@@ -53,6 +53,8 @@ with open("file.txt") as f:
     for line in iter(functools.partial(f.readline), ''):
         print(line, end='')
 ```
+
+<br></br>
 
 ## 2. Generators — Functions That Yield
 
@@ -114,6 +116,8 @@ print(list(gen_expr))  # [0, 1, 4, 9, 16] — must consume it to see values
 **When to prefer which:**
 - Use a **generator expression** when you'll only iterate once, don't need indexing/`len()`, and want to avoid building the full structure (e.g., feeding straight into `sum()`, `any()`, `join()`).
 - Use a **list comprehension** when you need to iterate multiple times, need random access, need `len()`, or the data is small enough that eagerness doesn't matter.
+
+<br></br>
 
 ## 3. Two-Way Communication: `send()`, `throw()`, `close()`
 
