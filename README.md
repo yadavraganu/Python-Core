@@ -1,7 +1,3 @@
-# Python-Core
-
-A comprehensive learning resource covering core Python concepts and advanced programming techniques.
-
 ## Contents
 
 This repository contains detailed markdown guides covering the following topics:
@@ -46,41 +42,3 @@ This repository contains detailed markdown guides covering the following topics:
 - **[21-Python-Logger.md](21-Python-Logger.md)** - Logging configuration and best practices
 - **[22-pytest.md](22-pytest.md)** - Unit testing framework and test-driven development
 - **[23-CPython-Object-Model.md](23-CPython-Object-Model.md)** - Deep dive into Python's object model
-
-## Purpose
-
-This repository serves as a structured learning path for:
-- Intermediate to advanced Python developers
-- Those looking to deepen their understanding of Python internals
-- Students preparing for technical interviews
-- Anyone seeking reference material on core Python concepts
-
-## How to Use
-
-1. Start with the fundamentals (topics 01-05) if you're new to these concepts
-2. Progress through data structures and modules (topics 06-07)
-3. Explore advanced functions (topics 08-09)
-4. Deep dive into OOP and advanced concepts (topics 11-18)
-5. Study concurrency patterns (topics 19-20)
-6. Review testing and logging practices (topics 21-22)
-
-## Getting Started
-
-Clone this repository to access all the guides:
-
-```bash
-git clone https://github.com/yadavraganu/Python-Core.git
-cd Python-Core
-```
-
-Each markdown file can be read directly on GitHub or in your favorite markdown viewer.
-
-## Notes
-
-- Each guide includes explanations, examples, and key takeaways
-- Topics are ordered from basic to advanced concepts
-- Files are independent but may reference related topics
-
-## Contributing
-
-Feel free to fork this repository and suggest improvements or additional content.
