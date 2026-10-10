@@ -31,6 +31,8 @@ BaseException
 
 **Note:** `SystemExit`, `KeyboardInterrupt`, and `GeneratorExit` inherit from `BaseException`, **not** `Exception`, specifically so that a broad `except Exception:` won't accidentally swallow a user's Ctrl+C or a clean `sys.exit()` call. This is the main reason a **bare `except:`** (which catches `BaseException`) is considered bad practice — it also catches these control-flow signals.
 
+**Common exceptions not drawn above:** `ImportError` (and its subclass `ModuleNotFoundError`), `AssertionError`, `EOFError`, `MemoryError`, `SyntaxError`, `StopAsyncIteration`, `UnicodeError` (a `ValueError` subclass, so `UnicodeDecodeError` is one too), `json.JSONDecodeError` (also a `ValueError`), and the `Warning` family. `IOError` is simply another name for `OSError`. Note that `asyncio.CancelledError` inherits from `BaseException` (not `Exception`) since Python 3.8, so a broad `except Exception:` won't swallow task cancellation (see `20-Async-Programming.md`).
+
 ## 2. Basic try/except/else/finally
 
 ```python
@@ -99,6 +101,21 @@ To deliberately hide the chain (e.g., in a public API where the internal cause i
 raise RuntimeError("failed") from None
 ```
 
+### Adding Context Without Changing the Exception — `add_note()` (3.11+)
+
+`add_note()` attaches extra text that shows up in the traceback, which is handy for annotating an error as it passes through a layer and then re-raising it unchanged:
+
+```python
+try:
+    try:
+        int("x")
+    except ValueError as e:
+        e.add_note("while parsing record 7")
+        raise                      # same exception, now carrying the note
+except ValueError as e:
+    print(e.__notes__)             # ['while parsing record 7']
+```
+
 ## 4. Custom Exceptions
 
 Define your own exceptions by subclassing `Exception` (never `BaseException` directly, unless you specifically want to bypass broad `except Exception` handlers — rare and usually wrong).
@@ -117,6 +134,29 @@ def withdraw(balance, amount):
     if amount > balance:
         raise InsufficientFundsError(balance, amount)
     return balance - amount
+```
+
+### Gotcha: Custom `__init__` Arguments Break Pickling and Copying
+
+An exception remembers only what you pass to `super().__init__()` (stored in `args`). `InsufficientFundsError` above passes a single formatted message, but its `__init__` needs **two** arguments. When the exception is pickled or copied, Python rebuilds it by calling the class with `args` — one argument — and that fails:
+
+```python
+import pickle
+e = InsufficientFundsError(10, 50)
+print(e.args)                      # ('Cannot withdraw 50; balance is only 10',)
+pickle.loads(pickle.dumps(e))      # TypeError: __init__() missing 1 required positional argument: 'amount'
+```
+`copy.copy(e)` fails the same way, and so does anything that moves exceptions between processes (`multiprocessing`, `ProcessPoolExecutor`): in a worker pool the failure surfaces as a confusing `TypeError` while the parent unpickles the worker's exception. The fix is to keep `args` aligned with the `__init__` signature and build the message in `__str__`:
+
+```python
+class InsufficientFundsError(Exception):
+    def __init__(self, balance, amount):
+        super().__init__(balance, amount)     # args == (balance, amount), so the exception can be rebuilt
+        self.balance = balance
+        self.amount = amount
+
+    def __str__(self):
+        return f"Cannot withdraw {self.amount}; balance is only {self.balance}"
 ```
 
 Custom exception **hierarchies** are common in larger codebases so callers can catch broadly or narrowly:
@@ -162,6 +202,8 @@ class Suppressor:
 with Suppressor():
     raise ValueError("this will be silently suppressed")
 ```
+
+**Don't write it this way in real code.** Returning `True` unconditionally swallows *every* exception, including unrelated bugs: `with Suppressor(): undefined_name` silently hides a `NameError` too. Check `exc_type` and suppress only the exceptions you intend to handle, or use `contextlib.suppress(FileNotFoundError)`. See `13-Context-Manager.md` for the full rules.
 
 ## 6. EAFP vs. LBYL
 
@@ -240,7 +282,7 @@ except* TypeError as eg:
 ## Notes & Gotchas
 
 - **Never use a bare `except:`** — it also catches `SystemExit` and `KeyboardInterrupt`. Use `except Exception:` at minimum if you must catch broadly.
-- **`except Exception as e:`** — the exception object `e` is deleted automatically at the end of the `except` block (a CPython/PEP 3110 detail); trying to reference it afterward raises `NameError`.
+- **`except Exception as e:`** — the exception object `e` is deleted automatically at the end of the `except` block (a CPython/PEP 3110 detail); trying to reference it afterward raises `NameError` (`UnboundLocalError`, a subclass, inside a function).
 - **`finally` overriding `return`:** a `return` inside `finally` silently swallows any exception or return value from the `try`/`except` — a classic "gotcha" question.
   ```python
   def f():
@@ -249,7 +291,10 @@ except* TypeError as eg:
       finally:
           return 2   # this wins — f() returns 2, and any exception is lost too
   ```
-- **Custom exceptions should call `super().__init__(...)`** so the message is captured properly and `str(exception)` works as expected.
-- **`raise` with no argument** only works inside an `except` block (re-raises the currently-handled exception); outside one it raises `RuntimeError: No active exception to re-raise`.
+  Python 3.14 emits a `SyntaxWarning` for `return`, `break` or `continue` that exits a `finally` block (PEP 765). Behavior is unchanged, but the pattern is now officially discouraged.
+- **Custom exceptions should call `super().__init__(...)`** so the message is captured and `str(exception)` works. If `__init__` takes extra arguments, pass them all through so `args` matches the signature, or the exception can't be pickled or copied (see the gotcha in section 4).
+- **`raise` with no argument** only works inside an `except` block (re-raises the currently-handled exception); outside one it raises `RuntimeError: No active exception to reraise`.
 - **Exceptions are relatively cheap on the success path** in Python, which is part of why EAFP is idiomatic — unlike some languages where exceptions carry heavy overhead regardless of whether they're thrown.
 - **`else` after `try` is easy to forget** but is the right place for code that should only run when nothing went wrong, keeping it out of the `try` block (so it isn't accidentally caught by your own `except`).
+- **`str(KeyError("a"))` is `'a'` — with the quotes.** `KeyError` shows the `repr` of its key, unlike most exceptions where `str(e)` is the plain message, so be careful when parsing it.
+- **`except*` restrictions:** `return`, `break` and `continue` aren't allowed inside an `except*` block, and one `try` can't mix `except` with `except*` (both are `SyntaxError`s).

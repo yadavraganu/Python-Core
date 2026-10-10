@@ -102,6 +102,8 @@ def f(pos_only, /, pos_or_kw, *args, kw_only, **kwargs):
 4. Keyword-only (after `*` or `*args`)
 5. `**kwargs` (extra keyword) — always last
 
+**Defaults and ordering:** a positional parameter without a default can't follow one that has a default (`def f(a=1, b)` is a `SyntaxError`), but keyword-only parameters (after `*`) can mix required and defaulted ones freely: `def g(a=1, *, b)` is fine.
+
 **Why use positional-only (`/`)?** It lets a library author rename a parameter later without breaking callers, and it's how many CPython builtins (like `len`) are defined internally.
 
 ## 3. How Arguments Are Actually Passed
@@ -136,7 +138,7 @@ When you reference a variable inside a function, Python searches in a specific o
 3. **G**lobal — at the top level of the module.
 4. **B**uilt-in — reserved names like `len`, `range`, `print`.
 
-Assigning to a name anywhere in a function body makes Python treat it as local for the *whole* function (see `UnboundLocalError` in the closures notes) unless declared `global` or `nonlocal`.
+Assigning to a name anywhere in a function body makes Python treat it as local for the *whole* function (see `UnboundLocalError` in `03-Scopes.md`, and how closures use `nonlocal` in `08-Closures.md`) unless declared `global` or `nonlocal`.
 
 ## 5. Anonymous Functions — `lambda`
 
@@ -213,7 +215,23 @@ add5(10)          # 15
 callable(add5)     # True
 ```
 
-## 10. Introspection and the `inspect` Module
+## 10. Functions That Don't Run When Called: Generators and Coroutines
+
+Adding `yield` to a `def` (or writing `async def`) changes what *calling* the function does: the body does **not** run. Instead you get an object that runs the body later.
+
+```python
+def gen():
+    print("body started")
+    yield 1
+
+g = gen()        # nothing printed — the body hasn't started
+next(g)          # prints "body started" and returns 1
+```
+- `def` containing `yield` → a **generator function**; the returned generator is a lazy iterator (see `10-Iterators-Generators.md`).
+- `async def` → a **coroutine function**; the returned coroutine object only runs when it is awaited or scheduled, and forgetting `await` is a classic bug (see `20-Async-Programming.md`).
+- In both cases the function itself is callable, but the object it returns is not.
+
+## 11. Introspection and the `inspect` Module
 
 For building frameworks or debugging complex systems, `inspect` lets you look "inside" a function object — its signature, source, and live stack frames.
 
@@ -223,10 +241,20 @@ import inspect
 def my_func(a, b=5): pass
 
 sig = inspect.signature(my_func)
-print(sig.parameters)   # OrderedDict([('a', <Parameter "a">), ('b', <Parameter "b=5">)])
+print(sig)                    # (a, b=5)
+print(list(sig.parameters))   # ['a', 'b']
+print(sig.parameters)         # mappingproxy(OrderedDict({'a': <Parameter "a">, 'b': <Parameter "b=5">})) — exact repr varies by version
 
-print(inspect.getsource(my_func))   # prints the source code
+print(inspect.getsource(my_func))    # prints the source code (needs the source file: raises OSError in a bare REPL or `python -c`)
 print(inspect.isfunction(my_func))   # True
+```
+
+Much of the same information is available directly as function attributes:
+
+```python
+print(my_func.__defaults__)             # (5,)  — default values, evaluated once at def time
+print(my_func.__code__.co_varnames)     # ('a', 'b')  — parameter and local variable names
+print(my_func.__closure__)              # None — or a tuple of cells if the function closes over variables
 ```
 
 ## Notes & Gotchas
@@ -237,4 +265,4 @@ print(inspect.isfunction(my_func))   # True
 - **Multiple return values** are really just one tuple being returned and unpacked: `def f(): return 1, 2` → `a, b = f()`.
 - **`*args`/`**kwargs` naming is convention, not syntax** — the `*`/`**` matters, not the names `args`/`kwargs`.
 - **Docstrings vs comments:** a docstring (`"""..."""` right after `def`) is stored in `__doc__` and accessible via `help()`; a `#` comment is not.
-- **`lambda` can't contain statements** (no `=` assignment, no `if`/`for` blocks) — only a single expression.
+- **`lambda` can't contain statements** (no `=` assignment statements, no `if`/`for` blocks) — only a single expression. Assignment *expressions* (`:=`) are allowed: `lambda x: (y := x * 2) + 1`.

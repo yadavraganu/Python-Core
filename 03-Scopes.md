@@ -64,7 +64,7 @@ def broken():
     x = 20      # ...but this assignment makes x local for the WHOLE function
     print(x)
 
-broken()   # UnboundLocalError: local variable 'x' referenced before assignment
+broken()   # UnboundLocalError — the wording varies by version (3.12: "cannot access local variable 'x' where it is not associated with a value"; older: "local variable 'x' referenced before assignment")
 ```
 
 This is one of the most frequently asked "why does this raise an error" interview questions. The fix, if you actually want to modify the module-global `x`, is the `global` keyword (see below) — merely reading a global without assigning to it never requires `global`.
@@ -107,6 +107,19 @@ for j in range(5):
 print(j)   # 4 — plain for-loops don't get their own scope
 ```
 
+### Comprehensions Inside a Class Body
+
+Combining the two rules above produces a well-known trap: a comprehension has its own scope, and a class body is not a scope that nested scopes can see. So inside a comprehension in a class body, only the **outermost iterable** (which is evaluated in the class scope) can see class variables:
+
+```python
+class A:
+    xs = [1, 2, 3]
+    k = 2
+    ys = [v * 2 for v in xs]    # works: `xs` is the outermost iterable, evaluated in the class scope
+    zs = [v * k for v in xs]    # NameError: name 'k' is not defined — `k` is looked up inside the comprehension's own scope
+```
+Workarounds: build the value with a plain `for` loop in the class body, compute it at module level, or do it in `__init__` or a classmethod.
+
 ---
 
 ## Accessing and Modifying Scope
@@ -135,6 +148,33 @@ def outer():
 
 ---
 
+## More Scope Gotchas
+
+### `global` / `nonlocal` Must Come Before Use
+Declaring a name `global` after it has already been used or assigned in the function is a `SyntaxError` (`name 'q' is used prior to global declaration`, or `... is assigned to before global declaration`). Put the declaration at the top of the function.
+
+### Shadowing Built-ins
+Because Built-in is the **last** scope searched, any assignment in an earlier scope hides the built-in of the same name:
+```python
+list = [1, 2]         # this module-level name now shadows the built-in `list`
+list("abc")           # TypeError: 'list' object is not callable
+del list              # removing the shadowing name makes the built-in visible again
+list("abc")           # ['a', 'b', 'c']
+```
+Common victims: `list`, `dict`, `str`, `id`, `max`, `sum`, `input`. Linters flag this.
+
+### `except ... as name` Un-binds the Name
+The variable in `except E as err:` is deleted when the block ends, so using `err` afterwards raises `NameError` (`UnboundLocalError` inside a function). Copy it to another name if you need it later (see `04-Exceptions.md`).
+
+### Closures Capture Variables, Not Values
+```python
+fs = [lambda: n for n in range(3)]
+print([f() for f in fs])    # [2, 2, 2] — every lambda looks up `n` when called, after the loop has finished
+```
+The fixes (a default argument or a factory function) are covered in `08-Closures.md`.
+
+---
+
 ## Inspecting Scope Programmatically
 
 ### `globals()` and `locals()`
@@ -149,7 +189,7 @@ def test():
 test()
 ```
 - `globals()` returns the **actual, live** dictionary backing the module's global namespace — mutating it (`globals()['x'] = 99`) really does change the global variable.
-- `locals()` inside a function returns a **snapshot copy** of the local namespace at that point, not a live view. In CPython, local variables are actually stored in a fast array-like structure (not a dict) for performance, so `locals()` builds a dict on demand — **mutating the dict `locals()` returns does not reliably affect the actual local variables.** (At module or class-body level, where the namespace genuinely is dict-based, `locals()` behaves more like a live view — the function-scope restriction is the special case worth remembering.)
+- `locals()` inside a function returns a **snapshot copy** of the local namespace at that point, not a live view. In CPython, local variables are actually stored in a fast array-like structure (not a dict) for performance, so `locals()` builds a dict on demand — **mutating the dict `locals()` returns does not reliably affect the actual local variables.** (At module or class-body level, where the namespace genuinely is dict-based, `locals()` behaves more like a live view — the function-scope restriction is the special case worth remembering.) Python 3.13 formalized this with PEP 667: each `locals()` call inside a function returns an independent snapshot, while `frame.f_locals` became a write-through view.
 
 ### Using `dir()`
 ```python
@@ -165,7 +205,7 @@ print(dir())   # Lists names in the current scope
 | Local | — | `locals()` (snapshot inside functions) | Assignment anywhere in the function makes the whole function treat the name as local |
 | Enclosing | `nonlocal` | Closure/nested function | Skips global scope entirely; errors if no enclosing binding exists |
 | Global | `global` | `globals()` (live dict) | Actually means "module-global," not program-wide |
-| Built-in | — | `__builtins__` / `builtins` module | Last resort in LEGB lookup |
+| Built-in | — | `import builtins` (not `__builtins__`) | Last resort in LEGB lookup. `__builtins__` is a CPython detail: a module in `__main__` but a dict in imported modules |
 | *(Class body)* | — | `ClassName.attr` / `self.attr` | **Not** part of LEGB — must be accessed explicitly, never implicitly from inside a method |
 
 ## Notes & Gotchas Worth Knowing for Interviews
@@ -174,4 +214,7 @@ print(dir())   # Lists names in the current scope
 - **Class bodies are excluded from LEGB for methods** — a very commonly tested distinction from "enclosing scope," which only refers to enclosing *functions*.
 - **Comprehensions get their own scope in Python 3**; plain `for`/`while` loops do not.
 - **`nonlocal` vs `global`**: `nonlocal` never touches module-global scope and errors without an enclosing binding; `global` can silently create a new module-level name.
-- **`globals()` is live; `locals()` inside a function is a snapshot`** — a subtle but real difference that occasionally comes up when someone tries to "hack" a local variable via the `locals()` dict and it silently doesn't work.
+- **`globals()` is live; `locals()` inside a function is a snapshot** — a subtle but real difference that occasionally comes up when someone tries to "hack" a local variable via the `locals()` dict and it silently doesn't work.
+- **Class-body comprehensions can't see class variables** (except in the outermost iterable) — two separate rules combining into a classic trick question.
+- **Built-ins are the last scope searched**, so assigning to `list`, `id`, `max`, etc. shadows them for the rest of that scope.
+- **`global`/`nonlocal` declarations must precede any use of the name**, or Python raises a `SyntaxError`.
