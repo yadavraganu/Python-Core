@@ -37,13 +37,23 @@ print(f"Type of add_five: {type(add_five)}")
 print(f"Type of add_ten: {type(add_ten)}")
 ```
 
-### What Qualifies as a Closure? (3-part test)
-A function is a closure only if **all three** hold:
-1. It's a nested function.
-2. It references a variable from its enclosing (non-global) scope.
-3. The enclosing function has returned / finished executing.
+### What Qualifies as a Closure?
+A function is a closure when **both** of these hold:
+1. It's defined inside another function (a nested function), and
+2. It references a variable from that enclosing (non-global) scope: a **free variable**.
 
-A nested function that only uses global variables, or that never escapes its enclosing function, is **not** a closure in the technical sense.
+CPython records this on the function itself. A nested function with free variables has a non-`None` `__closure__` (and the names show up in `__code__.co_freevars`), **even if it never leaves the outer function**:
+
+```python
+def outer():
+    x = 1
+    def inner():
+        return x
+    return inner(), inner.__closure__ is not None
+
+print(outer())   # (1, True) — inner is a closure, though it never escaped outer
+```
+Returning the inner function (so it *outlives* the outer call) is what makes closures useful, and it's what makes the "remembers its environment" behavior visible, but it is not part of the definition. A nested function that uses only its own locals, its parameters, or global names has no free variables, so it is not a closure (`__closure__` is `None`).
 
 ## Closure Variable Storage — Cell Objects
 
@@ -110,10 +120,54 @@ You can also inspect which names are free variables vs. locally defined, from th
 
 ```python
 print(add_five.__code__.co_freevars)   # ('x',)  — names closed over
-print(outer_function.__code__.co_varnames)  # locals of outer_function
+print(outer_function.__code__.co_cellvars)  # ('x',) — outer's variables that inner functions share via cells
+print(outer_function.__code__.co_varnames)  # ('x', 'inner_function') — all of outer's local names
 ```
 
 If a function has no closure, `__closure__` is `None`.
+
+## More Facts About Cells
+
+**Two inner functions share one cell.** That is how `nonlocal` writes in one function become visible in another:
+
+```python
+def pair():
+    n = 0
+    def inc():
+        nonlocal n
+        n += 1
+    def get():
+        return n
+    return inc, get
+
+inc, get = pair()
+print(inc.__closure__[0] is get.__closure__[0])   # True — a single cell, shared
+inc(); inc()
+print(get())                                       # 2
+print(get.__closure__[0].cell_contents)            # 2
+```
+Since Python 3.7 `cell_contents` is even writable (`get.__closure__[0].cell_contents = 99` changes what `get()` returns), which is why closure-based "privacy" is encapsulation by convention rather than security.
+
+**A cell can be empty.** If an inner function refers to a variable the outer function hasn't assigned yet, the cell exists but holds nothing:
+
+```python
+def late():
+    def g():
+        return y
+    print(g.__closure__[0].cell_contents)   # ValueError: Cell is empty
+    y = 5
+```
+
+**Methods that use `super()` or `__class__` are closures too.** The compiler adds a hidden `__class__` free variable to them:
+
+```python
+class Foo:
+    def m(self):
+        return super().__repr__()
+
+print(Foo.m.__code__.co_freevars)             # ('__class__',)
+print(Foo.m.__closure__[0].cell_contents is Foo)   # True
+```
 
 ## `nonlocal` vs `global`
 
@@ -172,6 +226,17 @@ def make_multiplier(i):
 
 funcs = [make_multiplier(i) for i in range(3)]
 ```
+
+**Fix 3 — `functools.partial` (binds the value immediately):**
+```python
+import operator
+from functools import partial
+
+funcs = [partial(operator.mul, i) for i in range(3)]
+print([f(10) for f in funcs])   # [0, 10, 20]
+```
+
+The same trap appears with a `lambda` inside a loop or comprehension: `[lambda: n for n in range(3)]` gives three functions that all return `2`. The cure is the same: bind the value as a default (`lambda n=n: n`) or through a factory/`partial`.
 
 This is one of the most frequently asked "explain this output" questions in Python interviews.
 
@@ -249,6 +314,9 @@ account['withdraw'](100)             # fails — insufficient funds
 print(account['get_balance']())      # 75
 
 # print(account.balance)  # AttributeError — no such attribute exists
+
+# But "private" is by convention only: the cell is reachable through introspection
+print(account['get_balance'].__closure__[0].cell_contents)   # 75
 ```
 
 ### 4. Decorators (closures in disguise)
@@ -256,9 +324,9 @@ print(account['get_balance']())      # 75
 def timer(func):
     import time
     def wrapper(*args, **kwargs):
-        start = time.time()
+        start = time.perf_counter()
         result = func(*args, **kwargs)      # 'func' is closed over
-        print(f"{func.__name__} took {time.time() - start:.4f}s")
+        print(f"{func.__name__} took {time.perf_counter() - start:.4f}s")
         return result
     return wrapper
 
@@ -270,8 +338,11 @@ Here `wrapper` is a closure over `func` — this is exactly why decorators are d
 
 ### 5. Memoization / Caching
 ```python
+from functools import wraps
+
 def memoize(func):
     cache = {}                 # shared, private cache — closed over
+    @wraps(func)               # keep the original's name and docstring
     def wrapper(*args):
         if args not in cache:
             cache[args] = func(*args)
@@ -282,6 +353,7 @@ def memoize(func):
 def slow_square(n):
     return n * n
 ```
+This toy version ignores keyword arguments and never evicts entries; in real code use `functools.cache` or `functools.lru_cache` (see `09-Decorators.md`).
 
 ## Closures vs. Classes
 
@@ -315,5 +387,8 @@ class Counter:
 - **`UnboundLocalError`:** assigning to a name anywhere in a function makes Python treat it as local for the *entire* function body, even before the assignment line — this is why `nonlocal`/`global` are needed for rebinding outer variables.
 - **Mutable objects don't need `nonlocal`:** if the outer variable is a mutable object (e.g., a list or dict), you can *mutate* it (`lst.append(x)`) from the inner function without `nonlocal` — you only need `nonlocal` to *rebind* the name itself (`lst = []`).
 - **Memory:** as long as a closure exists, the cells (and whatever they reference) stay alive — a subtle source of memory retention if closures capture large objects unnecessarily.
-- **`__closure__` is `None`** for functions that don't close over anything, even if they're nested.
+- **A nested function becomes a closure as soon as it has a free variable.** It does not need to be returned or to outlive the outer call; `__closure__` is `None` only for functions that close over nothing, even if they're nested.
+- **Closure "privacy" is encapsulation by convention**: the cells are reachable (and writable) through `__closure__`, so don't use closures to protect secrets.
 - Closures are why **decorators**, **partial application**, and patterns like memoization work the way they do in Python.
+- **Late binding has several cures:** a default argument (`i=i`), a factory function, or `functools.partial`. Each binds the value at definition time instead of looking the variable up at call time.
+- **Related notes:** the LEGB rules and `UnboundLocalError` are covered in `03-Scopes.md`, and decorators built on closures in `09-Decorators.md`.

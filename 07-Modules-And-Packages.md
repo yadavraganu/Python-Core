@@ -13,8 +13,8 @@ A module is a single Python file containing executable code, function definition
 ### Packages
 A package is a collection of modules organized in a directory structure.
 
-* **Folder Name**: Any directory containing Python files.
-* **The `__init__.py` file**: Tells Python that the directory should be treated as a package.
+* **Folder Name**: Any directory Python can find on `sys.path` (its name must be a valid identifier to be imported with normal `import` syntax).
+* **The `__init__.py` file**: Marks the directory as a **regular package**. (Since Python 3.3 a directory *without* it can still be imported as an implicit namespace package, see section 10, but include `__init__.py` unless you specifically want that behavior.)
   * It can be completely empty.
   * It runs initialization code when the package is first imported.
   * It can use `__all__` to control what gets exported during wildcard (`*`) imports.
@@ -50,6 +50,8 @@ import shop.billing
 # Accessing a function requires the full path
 shop.billing.create_invoice()
 ```
+
+**What actually gets bound:** `import shop.billing` binds only the top-level name `shop` in your namespace; `billing` is reached as an attribute of it, which is why the full dotted path is required. (`import shop.billing as b` binds `b` directly to the submodule.) Similarly, `from shop import billing` works even though `billing` is a module rather than a name defined inside `shop`: Python first looks for an attribute called `billing` on the package and, if it isn't there, tries importing `shop.billing` as a submodule.
 
 ### Specific `from ... import`
 Imports specific parts (functions, classes, variables) directly into your namespace. No module-name prefix needed.
@@ -93,7 +95,7 @@ def calculate_tax():
     pass
 
 def _internal_helper():
-    # Hidden by default due to the underscore prefix
+    # Excluded: not in __all__ (underscore names are also skipped by import * when __all__ is absent)
     pass
 
 def hidden_bonus_function():
@@ -148,15 +150,34 @@ import math
 if "factorial" in dir(math):
     print(math.factorial(5))
 ```
+`hasattr(math, "factorial")` is the more idiomatic spelling of the same check.
+
+### Checking Whether a Module Is Available (Optional Dependencies)
+
+Two common patterns:
+
+```python
+# 1. Try the import, fall back gracefully
+try:
+    import numpy as np
+except ImportError:          # ModuleNotFoundError is a subclass of ImportError
+    np = None
+
+# 2. Ask without importing the module itself
+import importlib.util
+if importlib.util.find_spec("numpy") is not None:
+    print("numpy is installed")
+```
+The first is the standard way to support optional dependencies; the second is handy when you only need to know whether something is installed.
 
 ## 5. Absolute vs. Relative Imports
 
 | Metric | Absolute Imports | Relative Imports |
 |---|---|---|
-| Path Origin | Always starts from the project root directory | Starts from the current module's position |
+| Path Origin | Starts from a top-level package/module found on `sys.path` (usually your project root) | Starts from the current module's own package |
 | Syntax Style | Explicit full path using words | Uses single (`.`) or double (`..`) dots |
 | PEP 8 Status | Preferred for readability and safety | Acceptable for complex, deeply nested packages |
-| Execution | Works from anywhere in the application | Only works when executed as part of a package |
+| Execution | Works wherever the top-level package is importable | Only works when the module is imported as part of a package (not run as a plain script) |
 
 ### Absolute Imports
 Outlines the exact path from the project root to the desired resource.
@@ -169,8 +190,9 @@ from shop.inventory import get_item_count  # Clear, explicit, and readable
 ### Relative Imports
 Detects the target module's location based on where the current file is.
 
-* `.` (one dot) — current directory.
-* `..` (two dots) — parent directory (one level up).
+* `.` (one dot) — the current package.
+* `..` (two dots) — the parent package (one level up); each extra dot climbs one more level.
+* Relative imports use the `from ... import ...` form only (`import .inventory` is a syntax error), and they can't climb above the top-level package.
 
 ```python
 # Working inside: shop/billing.py
@@ -198,6 +220,8 @@ ImportError: attempted relative import with no known parent package
 python -m shop.billing
 ```
 
+Running the file by path from the project root (`python shop/billing.py`) fails the same way, because Python treats it as a standalone script with no package context. This example assumes the flat layout from section 1; with the `src/` layout in section 8, first run `pip install -e .`, after which `python -m shop.billing` works from any directory.
+
 ## 6. Module Lifecycle and Resolution
 
 ### Module Caching and Re-execution
@@ -214,13 +238,23 @@ importlib.reload(shop.billing)  # Force re-executes the file
 
 **`reload` gotcha:** it re-executes the module and updates the existing module object in place, but any name you previously bound with `from shop.billing import create_invoice` still points at the **old** function object. Only code that accesses it through the module (`shop.billing.create_invoice()`) sees the new version. This is one reason `import module` is friendlier to live-reloading than `from module import name`.
 
+### The Double-Import Problem
+
+`sys.modules` caches by **name**, not by file. If one file is reachable under two different names, it is executed twice and you get two separate module objects:
+- Putting both `project/` and `project/shop/` on `sys.path` lets you `import billing` *and* `import shop.billing`: two names, one file.
+- Running `python shop/billing.py` executes the file as `__main__`; if another module then does `import shop.billing`, the file runs **again** under its real name. The result is duplicate classes, duplicate global state, and baffling `isinstance` failures.
+
+Avoid it by using consistent absolute imports and exactly one import root on `sys.path`.
+
 ### How Python Locates Modules (`sys.path`)
 On `import xyz`, Python searches an ordered list of directory paths in `sys.path`:
 
 1. **The Current Directory** — the folder containing the script you launched.
 2. **PYTHONPATH** — an optional environment variable with extra directory paths.
-3. **Standard Library** — built-in locations (where `math`, `os`, `sys` live).
+3. **Standard Library** — the interpreter's library directories (where `os`, `json`, `random`, etc. live).
 4. **Third-Party Packages (`site-packages`)** — where `pip`-installed packages live.
+
+Before `sys.path` is consulted at all, Python checks `sys.modules` and then the **built-in** and **frozen** modules (such as `sys` and `builtins`, which are compiled into the interpreter). That's why a local `sys.py` can't shadow the real `sys`, whereas a local `random.py` or `json.py` can.
 
 If nothing matches across all of these, Python raises `ModuleNotFoundError`. You can inspect or extend the search path directly:
 ```python
@@ -237,6 +271,7 @@ When a module is imported (not run directly as `__main__`), CPython compiles its
 * On the next import, Python compares the source file's timestamp/hash against the cached bytecode; if unchanged, it skips recompilation and loads the cached bytecode directly — faster startup.
 * `.pyc` files are version-specific (tied to the interpreter version in the filename) and are safe to delete; Python regenerates them automatically.
 * This caching is purely an import-time optimization — it has no effect on how the *script you actually run* (`python billing.py`) is executed, since the top-level script itself isn't cached this way.
+* You can stop `.pyc` files being written with `python -B` or `PYTHONDONTWRITEBYTECODE=1`, and `__pycache__/` belongs in your `.gitignore`.
 
 ## 7. `__name__ == "__main__"` — Script vs. Import Behavior
 
@@ -266,8 +301,10 @@ Other module-level introspection attributes worth knowing:
 print(__name__)      # "__main__" or the module's dotted name
 print(__file__)      # the file path this code was loaded from
 print(__doc__)        # the module's top-level docstring, if any
-print(__package__)    # the package this module belongs to (or None/'' for top-level scripts)
+print(__package__)    # the package this module belongs to (None when run as a plain script, '' for a top-level imported module)
+print(__spec__)       # the ModuleSpec the import system used (None for a script run by path)
 ```
+Packages additionally have `__path__`, the list of directories searched for their submodules (`import shop; print(shop.__path__)`); plain modules don't.
 
 ## 8. Packaging Your Code — Step-by-Step Guide
 
@@ -294,7 +331,7 @@ my_shared_package/
     └── test_billing.py
 ```
 
-**Why the `src/` layout?** With `src/`, your package is *not* importable from the project root by accident, so tests run against the **installed** package instead of the loose source folder. That catches packaging mistakes (a missing file, a wrong path) before your users do.
+**Why the `src/` layout?** With `src/`, your package is *not* importable from the project root by accident, so you are forced to install it (even in editable mode) before importing it. That surfaces layout and configuration mistakes early, instead of hiding them behind the current directory happening to be on `sys.path`.
 
 ### Step 2 — Create and Activate a Virtual Environment
 
@@ -319,6 +356,23 @@ __version__ = "1.0.0"
 # src/shop/billing.py
 def create_invoice():
     return "Invoice created"
+```
+```python
+# src/shop/__main__.py   (the target of the shop-cli entry point in Step 4)
+from .billing import create_invoice
+
+def main():
+    print(create_invoice())
+
+if __name__ == "__main__":
+    main()
+```
+```python
+# tests/test_billing.py
+from shop import create_invoice
+
+def test_create_invoice():
+    assert create_invoice() == "Invoice created"
 ```
 
 ### Step 4 — Write `pyproject.toml`
@@ -357,6 +411,7 @@ What each part does:
 - **`[project]`**: standard metadata (PEP 621), understood by every backend and tool.
 - **`dependencies`** vs **`optional-dependencies`**: the first is installed for every user; the second is opt-in extras like dev tools.
 - **`[project.scripts]`**: turns `shop.__main__:main` into a real command-line program on the user's PATH.
+- **`[tool.setuptools.packages.find]`**: tells setuptools to look under `src/`. Recent setuptools can auto-discover a `src/` layout even without it, but being explicit avoids surprises as the layout grows.
 - Version numbers here are illustrative; check current guidance for your backend.
 
 *Optional, single-source the version:* instead of repeating `1.0.0` in two places, declare it dynamic and let setuptools read it from the package:
@@ -375,14 +430,20 @@ pip install -e ".[dev]"
 python -c "import shop; print(shop.__version__)"
 shop-cli
 ```
-An **editable install** links your source folder into the environment, so code edits take effect immediately with no reinstall. If `import shop` works from *any* directory, your package layout and config are correct.
+An **editable install** links your source folder into the environment, so code edits take effect immediately with no reinstall. If `import shop` works from *any* directory, the package is being discovered correctly. It does **not** prove the packaging is complete: editable installs can hide mistakes such as a data file that won't make it into the wheel, which is exactly what Steps 8 and 9 check.
+
+You can also read the *installed* version from package metadata instead of a hard-coded string:
+```python
+from importlib.metadata import version
+print(version("my-custom-shop-pkg"))   # takes the DISTRIBUTION name, not the import name
+```
 
 ### Step 6 — Run Your Tests
 
 ```bash
 pytest
 ```
-Because of the `src/` layout, these tests exercise the installed package, which is exactly what your users will get.
+Because of the `src/` layout, the tests import `shop` through the installed (editable) package rather than accidentally through the current directory. To test exactly what your users get, also run the suite against the built wheel in a clean environment (Step 9), ideally in CI.
 
 ### Step 7 — Build the Distribution Files
 
@@ -395,6 +456,8 @@ This creates a `dist/` folder containing two artifacts:
 |---|---|---|
 | `my_custom_shop_pkg-1.0.0.tar.gz` | **sdist** (source distribution) | Your source plus metadata; pip must run the build backend to install it |
 | `my_custom_shop_pkg-1.0.0-py3-none-any.whl` | **wheel** (built distribution) | A pre-built zip that pip installs directly, so it's fast and needs no build step |
+
+(The exact spelling of the name part, hyphens vs. underscores, varies with your backend version.)
 
 Reading the wheel filename: `name-version-pythontag-abitag-platformtag`. `py3-none-any` means **pure Python**, working on any OS and any Python 3. Packages with compiled C extensions produce platform-specific wheels instead. Publish **both** files: pip prefers the wheel and falls back to the sdist.
 
@@ -419,7 +482,7 @@ This proves the wheel works **without** your source tree or dev environment lyin
 
 ### Step 10 — Publish to TestPyPI First (a Safe Rehearsal)
 
-1. Create accounts on [test.pypi.org](https://test.pypi.org) and [pypi.org](https://pypi.org) (separate accounts) and enable 2FA.
+1. Create accounts on [test.pypi.org](https://test.pypi.org) and [pypi.org](https://pypi.org) (they are separate accounts) and set up 2FA (PyPI requires it).
 2. Create an **API token** on TestPyPI.
 3. Upload:
 ```bash
@@ -433,6 +496,8 @@ pip install --index-url https://test.pypi.org/simple/ \
             --extra-index-url https://pypi.org/simple/ my-custom-shop-pkg
 ```
 The `--extra-index-url` matters: your dependencies (like `requests`) live on the real PyPI, not TestPyPI.
+
+If `--repository testpypi` isn't recognized in your setup, pass the URL explicitly (`twine upload --repository-url https://test.pypi.org/legacy/ dist/*`) or define the repository in `~/.pypirc`.
 
 ### Step 11 — Publish to the Real PyPI
 
@@ -456,11 +521,24 @@ Then `pip install my-custom-shop-pkg` works for anyone in the world.
 
 The steps above use the standard, backend-agnostic tools (`build` + `twine`), so they work everywhere. All-in-one tools wrap the same workflow: **`uv`** (`uv build`, `uv publish`), **Hatch** (`hatch build`, `hatch publish`), and **Poetry** (`poetry build`, `poetry publish`). Knowing the underlying steps makes any of them easy to pick up.
 
+### Declaring Dependencies: Version Specifiers and Requirements Files
+
+| Specifier | Meaning |
+|---|---|
+| `requests==2.32.3` | Exactly this version |
+| `requests>=2.28` | At least this version |
+| `requests>=2.28,<3` | A range (typical: allow updates, block the next major version) |
+| `requests~=2.28` | "Compatible release": same as `>=2.28, ==2.*` |
+| `tomli>=2; python_version < "3.11"` | Environment marker: install only when the condition holds |
+
+**Libraries vs. applications:** a *library* (like this package) should declare **loose** ranges in `pyproject.toml` so it can coexist with other packages. An *application* should **pin exact versions** for reproducible deployments (via `pip freeze > requirements.txt`, or a lock file from `uv`, `pip-tools`, or Poetry) and install them with `pip install -r requirements.txt`.
+
 ### Common Packaging Pitfalls
 
 | Symptom | Likely cause and fix |
 |---|---|
-| `ModuleNotFoundError` after installing your own package | The `[tool.setuptools.packages.find] where = ["src"]` setting is missing or the folder layout doesn't match |
+| `ModuleNotFoundError` after installing your own package | The package wasn't discovered (folder not under `src/`, or the `where = ["src"]` setting doesn't match your layout), or you installed into a different environment than the one you're running (check `python -m pip` and `which python`) |
+| `shop-cli` fails with an `ImportError` or "command not found" | The `[project.scripts]` target must point at a real importable function (`shop.__main__:main`); reinstall after changing it |
 | Works in your repo, breaks for users | You tested against loose source instead of the installed package (the reason for `src/` layout and Step 9) |
 | Non-`.py` files (templates, JSON, data) missing from the wheel | They aren't included by default; declare them, e.g. `[tool.setuptools.package-data] shop = ["data/*.json"]` |
 | `400 File already exists` on upload | That version was already published; bump the version and rebuild |
@@ -490,7 +568,7 @@ class Order: pass
 # --- order.py ---
 class Order:
     def assign_to_user(self):
-        from .user import User  # inline import avoids the deadlock
+        from .user import User  # deferred until call time, so the cycle never occurs at import
         pass
 ```
 * **Solution B — Structural redesign:** move shared classes/functions into an independent third module (e.g., `models.py`) that both sides can safely import.
@@ -510,9 +588,10 @@ class Order:
 
 ### Shadowing / Name Conflicts
 
-* **Cause**: A local file shares a name with a built-in module or third-party library (e.g., naming a test file `math.py` or `requests.py`). Since the current directory is checked first in `sys.path`, Python imports the local file instead of the real library.
-* **Symptom**: `AttributeError: module 'math' has no attribute 'sqrt'`
-* **Solution**: Rename the local file to something unique (e.g., `math_test.py`).
+* **Cause**: A local file shares a name with a standard-library or third-party module (e.g., a script named `random.py`, `json.py`, `email.py`, or `requests.py`). Since the script's directory comes first in `sys.path`, Python imports your file instead of the real module. (Truly built-in modules compiled into the interpreter, like `sys`, are found before `sys.path` is searched and can't be shadowed this way.)
+* **Symptoms**: `AttributeError: module 'requests' has no attribute 'get'`, or, when the shadowing file itself imports that name, `AttributeError: partially initialized module 'random' has no attribute 'randint' (most likely due to a circular import)`. The word "circular" is misleading there; the real cause is the name clash.
+* **Diagnose**: print the module's file location (`import random; print(random.__file__)`). If it points into your project, that's the culprit.
+* **Solution**: Rename the local file to something unique (e.g., `random_demo.py`) and delete its stale copy in `__pycache__`.
 
 ## 10. Advanced Tip: Namespace Packages
 
@@ -520,6 +599,8 @@ Since Python 3.3 (PEP 420), you can create a package **without** an `__init__.py
 
 * **Why use it?** It lets large companies or open-source projects split a single package across completely different directories or separate git repositories.
 * **Example**: Company A distributes `company.core`; Company B distributes `company.auth`. When a user installs both, Python seamlessly merges them under the single `company` namespace, even though they originated from separate codebases.
+* **Caveat:** the shared directory must have **no** `__init__.py` in any portion. If one portion has an `__init__.py` in `company/`, it becomes a regular package and the first one found wins instead of merging. Namespace packages have no single `__file__`, and their `__path__` spans several directories.
+* **Gotcha:** because a missing `__init__.py` no longer causes an error, forgetting one in an ordinary project silently produces an implicit namespace package. Imports may still work, but test discovery, packaging, and type checkers can behave differently, so include `__init__.py` unless you *want* a namespace package.
 
 ## 11. Import Style and Ordering (PEP 8)
 
@@ -567,7 +648,7 @@ def __getattr__(name):
 ```bash
 python -X importtime -c "import shop"
 ```
-Prints how long each import took (self and cumulative), which is the quickest way to find what's making a CLI tool slow to start.
+Prints (to stderr) how long each import took, self and cumulative, which is the quickest way to find what's making a CLI tool slow to start.
 
 ## 13. Making a Package Runnable with `__main__.py`
 
@@ -597,7 +678,7 @@ This is the standard way to ship a command-line entry point inside a package, an
 ## Notes & Gotchas
 
 - **`if __name__ == "__main__":`** is the single most-asked module concept — know both *what* it does and *why* (prevents import-time side effects).
-- **Modules are only executed once per process** — top-level code (including print statements, class/function definitions) runs at import time, not each time you reference the module afterward.
+- **Modules are only executed once per process** — top-level code (including print statements, class/function definitions) runs at import time, not each time you reference the module afterward. (More precisely: once per *name* in `sys.modules`; the same file imported under two names runs twice.)
 - **Circular imports** are usually a design smell — needing an inline import to "fix" one is often a sign two modules are too tightly coupled and share responsibilities that belong in a third module.
 - **`__pycache__`/.pyc files** are safe to delete; Python regenerates them and uses source timestamps/hashes to know when to recompile.
 - **Wildcard imports (`from x import *`) and `__all__`** are frequently paired questions — know that `__all__` only affects `import *`, not `from module import specific_name`, which always works regardless of `__all__`.
@@ -613,3 +694,8 @@ This is the standard way to ship a command-line entry point inside a package, an
 - **sdist vs wheel:** an sdist is source that needs a build step at install time; a wheel is pre-built and installs directly. Publish both, and pip prefers the wheel.
 - **PyPI versions are immutable**: you can never re-upload a version, so rehearse on TestPyPI and bump the version to fix a bad release.
 - **`pyproject.toml` separates three concerns:** `[build-system]` (how to build), `[project]` (metadata and dependencies), and `[tool.*]` (backend/tool settings).
+- **The double-import problem:** running `python shop/billing.py` executes it as `__main__`, and a later `import shop.billing` executes it again as a separate module object. Always run package code with `python -m`.
+- **Built-in modules (`sys`, `builtins`) can't be shadowed by a local file; pure-Python stdlib modules (`random`, `json`) can.** A "partially initialized module ... circular import" error on a stdlib name usually means you shadowed it.
+- **`ImportError` vs `ModuleNotFoundError`:** the latter is a subclass raised when no such module exists at all; a bare `ImportError` usually means the module was found but the *name* wasn't (as in a circular import).
+- **Libraries declare loose dependency ranges; applications pin exact versions.**
+- **`importlib.metadata.version("dist-name")`** reads the installed version from package metadata (using the distribution name, not the import name).

@@ -17,8 +17,6 @@ print(next(it))   # raises StopIteration — exhausted
 
 **Key distinction to state clearly if asked:** every iterator is an iterable (its `__iter__` just returns `self`), but not every iterable is an iterator — a `list` is iterable but has no `__next__`, so `next(nums)` raises `TypeError`. This asymmetry is exactly why you can loop over the same list twice but can't loop over the same *exhausted* iterator once.
 
-<br></br>
-
 ### The Iterator Protocol
 
 ```python
@@ -47,14 +45,42 @@ for n in Countdown(3):
 `iter(callable, sentinel)` repeatedly calls `callable()` until it returns `sentinel`, then stops — useful for reading until a marker value:
 
 ```python
-import functools
-
 with open("file.txt") as f:
-    for line in iter(functools.partial(f.readline), ''):
+    for line in iter(f.readline, ''):      # stops at the first '' (end of file)
         print(line, end='')
+
+# Reading a binary file in fixed-size blocks, a classic use of the same form:
+with open("data.bin", "rb") as f:
+    sizes = [len(block) for block in iter(lambda: f.read(4096), b'')]
+print(sizes)   # e.g. [4096, 4096, 1808] for a 10,000-byte file
 ```
 
-<br></br>
+### Which Objects Are Iterables vs. Iterators?
+
+| Iterator (has `__next__`; one pass) | Iterable but **not** an iterator (re-iterable) |
+|---|---|
+| generator objects, generator expressions | `list`, `tuple`, `str`, `dict`, `set` |
+| file objects (`iter(f) is f`) | `range` (`next(range(3))` raises `TypeError`) |
+| `map`, `filter`, `zip`, `enumerate` (all lazy in Python 3) | `dict.keys()`, `.values()`, `.items()` views |
+| what `iter(x)` returns, and `itertools` objects | most user-defined container classes |
+
+### Making Your Own Iterable
+
+The easiest way to write a re-iterable class is to make `__iter__` a generator method. Each `for` loop then gets a fresh generator:
+
+```python
+class Bag:
+    def __init__(self, items):
+        self.items = items
+
+    def __iter__(self):
+        for item in self.items:
+            yield item
+
+b = Bag([1, 2])
+print(list(b), list(b))   # [1, 2] [1, 2] — can be looped over repeatedly
+```
+Contrast this with `Countdown` above, whose `__iter__` returns `self`: it's a one-shot iterator. As a last-resort fallback, Python also supports the **old sequence protocol**: an object with only `__getitem__` (taking 0, 1, 2, ... and raising `IndexError` at the end) can be iterated with `for` and `iter()`.
 
 ## 2. Generators — Functions That Yield
 
@@ -77,9 +103,28 @@ print(next(gen))     # raises StopIteration
 
 **`yield` vs. `return`:**
 - `return` exits a function permanently, discarding all local state.
-- `yield` **suspends** the function, preserving all local variables, the instruction pointer, and the call stack frame — exactly the frame-object mechanism described in `Internals.md`. The function resumes exactly where it left off on the next `next()` call, rather than restarting.
+- `yield` **suspends** the function, preserving all local variables, the instruction pointer, and the call stack frame — exactly the frame-object mechanism described in `17-Internals.md`. The function resumes exactly where it left off on the next `next()` call, rather than restarting.
 
 A generator function can still use a bare `return` to stop early — this simply raises `StopIteration` immediately (optionally carrying a value, accessible via the exception's `.value` in advanced use, e.g., inside `yield from`).
+
+### Inspecting a Generator's State
+
+```python
+import inspect
+
+def gen():
+    yield 1
+
+g = gen()
+print(inspect.getgeneratorstate(g))   # GEN_CREATED  — not started yet
+next(g)
+print(inspect.getgeneratorstate(g))   # GEN_SUSPENDED — paused at a yield
+try:
+    next(g)
+except StopIteration:
+    pass
+print(inspect.getgeneratorstate(g))   # GEN_CLOSED   — finished (a generator can also be GEN_RUNNING while executing)
+```
 
 ### Why Generators Matter: Lazy Evaluation and Memory
 
@@ -97,6 +142,7 @@ def squares_gen(n):
 # squares_gen uses effectively constant memory regardless of n.
 total = sum(squares_gen(10_000_000))   # never holds more than one value at once
 ```
+Measured on CPython 3.12: the generator object is about 192 bytes no matter how large `n` is, while a list of a million items needs roughly 8 MB for its pointers alone (the `int` objects are extra).
 
 This is the standard answer to "why use a generator instead of a list" — constant memory usage, and the ability to represent **infinite** sequences, which a list fundamentally cannot do.
 
@@ -117,7 +163,40 @@ print(list(gen_expr))  # [0, 1, 4, 9, 16] — must consume it to see values
 - Use a **generator expression** when you'll only iterate once, don't need indexing/`len()`, and want to avoid building the full structure (e.g., feeding straight into `sum()`, `any()`, `join()`).
 - Use a **list comprehension** when you need to iterate multiple times, need random access, need `len()`, or the data is small enough that eagerness doesn't matter.
 
-<br></br>
+### Generator Expressions: Only the First Iterable Is Evaluated Immediately
+
+```python
+try:
+    g = (x for x in undefined_name)    # NameError right here, at creation: the outermost iterable is evaluated eagerly
+except NameError:
+    print("raised immediately")
+
+y = 0
+g = (x for x in range(3) if y == 0)    # the condition is evaluated lazily, per item
+y = 1
+print(list(g))                          # [] — by the time it runs, y is already 1
+```
+
+### Generator Pipelines
+
+Chaining generators processes data one item at a time, so even a huge file never has to fit in memory:
+
+```python
+def read_lines(path):
+    with open(path) as f:
+        for line in f:
+            yield line.rstrip("\n")
+
+def non_empty(lines):
+    return (line for line in lines if line)
+
+def shout(lines):
+    return (line.upper() for line in lines)
+
+for line in shout(non_empty(read_lines("file.txt"))):
+    print(line)
+```
+Each stage pulls from the one before it on demand; nothing is read until the final `for` loop asks for the next item.
 
 ## 3. Two-Way Communication: `send()`, `throw()`, `close()`
 
@@ -161,7 +240,20 @@ gen = resilient_gen()
 next(gen)
 gen.close()   # raises GeneratorExit inside the generator at the suspended yield point
 ```
-`close()` raises `GeneratorExit` at the paused point; the generator may catch it to run cleanup code (like a `finally` block would), but re-raising anything other than `GeneratorExit` or letting the generator simply return is required — yielding again after `close()` raises `RuntimeError`.
+`close()` raises `GeneratorExit` at the paused point and then marks the generator closed (`inspect.getgeneratorstate` reports `GEN_CLOSED`). The generator can use a `finally` block (or catch `GeneratorExit`) to clean up:
+
+```python
+def cleanup_gen():
+    try:
+        yield 1
+    finally:
+        print("finally ran on close()")
+
+g = cleanup_gen()
+next(g)
+g.close()          # prints: finally ran on close()
+```
+What it must **not** do is `yield` again while handling `GeneratorExit`; that raises `RuntimeError: generator ignored GeneratorExit`. Letting `GeneratorExit` propagate, or simply returning, is correct. Generators are also closed automatically when garbage-collected.
 
 ## 4. `yield from` — Delegating to a Sub-Generator
 
@@ -222,6 +314,18 @@ list(itertools.islice(itertools.count(), 5))    # [0, 1, 2, 3, 4] — slice an i
 
 `itertools.count()`/`cycle()` are only usable at all *because* generators are lazy — a truly infinite list could never be built, but a truly infinite generator costs no memory since it only ever holds its current state.
 
+A few more worth knowing:
+
+```python
+import itertools
+
+list(itertools.pairwise([1, 2, 3]))          # [(1, 2), (2, 3)] — 3.10+
+list(itertools.batched(range(5), 2))         # [(0, 1), (2, 3), (4,)] — 3.12+
+a, b = itertools.tee([1, 2, 3])              # two independent iterators over one source
+list(a), list(b)                             # ([1, 2, 3], [1, 2, 3])
+```
+`tee` buffers items for whichever copy lags behind, so don't keep using the original iterator after splitting it, and avoid it when one copy will run far ahead of the other.
+
 ## 6. Common Pitfalls & Gotchas
 
 ### Iterators/Generators Are Exhausted After One Full Pass
@@ -233,7 +337,7 @@ print(list(gen))   # [] — already exhausted, cannot be restarted
 Unlike a `list`, which you can iterate over repeatedly, a generator (and any iterator) is single-use. If you need to iterate multiple times, either keep the original iterable (e.g., a list) around, or call the generator **function** again to get a fresh generator object.
 
 ### `StopIteration` Inside a Generator (PEP 479)
-Before Python 3.7, an unhandled `StopIteration` raised *inside* a generator body would silently propagate and prematurely terminate the enclosing `for` loop — a confusing, hard-to-debug behavior. **PEP 479** changed this: an unhandled `StopIteration` escaping a generator's body is now converted into a `RuntimeError`, forcing the bug to surface loudly instead of silently truncating iteration.
+Before PEP 479, an unhandled `StopIteration` raised *inside* a generator body would silently propagate and prematurely terminate the enclosing `for` loop — a confusing, hard-to-debug behavior. **PEP 479** changed this: an unhandled `StopIteration` escaping a generator's body is now converted into a `RuntimeError`, forcing the bug to surface loudly instead of silently truncating iteration. It was opt-in in Python 3.5 and 3.6 (via `from __future__ import generator_stop`) and became the default in 3.7.
 
 ```python
 def broken_gen():
@@ -264,7 +368,13 @@ Using `collections.abc.Iterable`/`Iterator` for `isinstance` checks is more robu
 - **`StopIteration` is the normal termination signal for the protocol**, not an error to catch defensively everywhere — `for` loops handle it automatically.
 - **Generators trade eagerness for memory** — the standard justification for choosing them, and the reason infinite sequences (`itertools.count`) are even possible.
 - **Generators are single-use** — a very common "why did my second loop print nothing" bug.
-- **`yield` preserves the entire function's local state via its frame object**, unlike `return`, which discards it — ties directly into how CPython frames work (see `Internals.md`).
+- **`yield` preserves the entire function's local state via its frame object**, unlike `return`, which discards it — ties directly into how CPython frames work (see `17-Internals.md`).
 - **PEP 479 turns a `StopIteration` raised inside a generator into a `RuntimeError`** — know this if asked why manually raising `StopIteration` inside a generator body is discouraged/broken in modern Python.
 - **`yield from` forwards `send()`/`throw()`/`close()` automatically** — reimplementing that delegation manually with a plain loop is significantly more code and easy to get subtly wrong.
 - **A generator expression inside a single function call doesn't need extra parentheses**: `sum(x*x for x in range(10))` is valid — the call's own parentheses double as the generator expression's parentheses.
+- **`range`, dict views and containers are iterable but not iterators; file objects, generators, `map`, `filter` and `zip` are iterators** — only the latter are exhausted after one pass.
+- **A class whose `__iter__` is a generator method is re-iterable**; one whose `__iter__` returns `self` is a one-shot iterator.
+- **`iter(callable, sentinel)` doesn't need `partial`**: `iter(f.readline, '')` is enough, because `f.readline` is already a callable.
+- **A generator expression evaluates its outermost iterable immediately** but everything else lazily.
+- **`gen.close()` runs `finally` blocks and marks the generator closed; yielding inside `except GeneratorExit` raises `RuntimeError`.**
+- **`async def` containing `yield` is an *async* generator** (iterated with `async for`), a separate protocol covered in `20-Async-Programming.md`.

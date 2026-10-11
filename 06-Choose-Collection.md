@@ -23,9 +23,10 @@
   - `append()`: O(1) amortized (occasional resize costs more).
   - `pop()` from end: O(1); from front or middle: O(n).
   - `insert(i, x)`: O(n) due to element shifting.
+  - `remove(x)`, `index(x)`: O(n). `sort()` / `sorted()`: O(n log n) (Timsort, stable).
   - `del lst[i]`: O(n) for front/middle, O(1) for end.
   - Slicing `lst[a:b]`: O(b-a) creates new list.
-  - Iteration: O(n), memory overhead grows to support dynamic resizing.
+  - Iteration: O(n). Each slot stores an 8-byte pointer (plus the object itself), and the buffer over-allocates so that `append` is amortized O(1).
   - **Thread-safe for atomic operations only** (append, pop); not safe for multi-step sequences.
 
 ### tuple
@@ -37,8 +38,9 @@
   - You need to modify, append, or reorder elements.
   - Very large homogeneous sequences (consider NumPy arrays).
 - **Performance Notes:**
-  - Iteration O(n), slightly faster than list due to immutability optimizations.
-  - Lower memory overhead than list because no resizing buffer.
+  - Iteration O(n), the same as a list.
+  - Lower memory than a list because there is no over-allocation buffer: `sys.getsizeof((1, 2, 3))` is 64 bytes versus 88 for `[1, 2, 3]` (CPython 3.12, 64-bit).
+  - Hashable only if **all** its elements are: `hash((1, 2))` works, `hash((1, [2]))` raises `TypeError`.
   - Unpacking: O(n); equality checking: O(n) until first difference.
   - Single element tuple requires trailing comma: `(x,)`.
 
@@ -55,7 +57,7 @@
 - **Performance Notes:**
   - `add()`, `remove()`, `discard()`, `in`: O(1) average; worst-case O(n) if many hash collisions.
   - Set operations: `union()` O(n+m), `intersection()` O(min(n,m)), `difference()` O(n).
-  - Memory: higher due to hash table overhead per element (~24 bytes per entry overhead).
+  - Memory: hash-table overhead. An empty set is 216 bytes and a large one costs about 42 bytes per element, versus 8 bytes per list slot (measured on CPython 3.12, container only, excluding the elements themselves).
   - Iteration: O(n), order not guaranteed.
 
 ### frozenset
@@ -65,11 +67,11 @@
   - Function parameters where mutation must be prevented.
 - **When to Avoid:**
   - Any scenario where you must update the collection (use `set` instead).
-  - Performance-critical scenarios (microseconds matter)—mutable `set` may be faster due to fewer safety checks.
+  - Building the collection incrementally: a `frozenset` has no `add()`, so build a `set` first and convert once at the end.
 - **Performance Notes:**
   - Same time complexities as `set`.
-  - Slightly lower overhead because fewer mutation checks in implementation.
-  - Hashing: computed once at creation, cached (unlike unhashable types).
+  - Same memory per element as `set` (measured: about 42 bytes each).
+  - Hashable, so it can be a dict key or an element of another set; equal frozensets hash equal regardless of element order.
 
 ### dict
 - **When to Use:**
@@ -82,10 +84,11 @@
   - When you need ordered iteration in Python <3.7 (use `OrderedDict`).
 - **Performance Notes:**
   - `__getitem__`, `__setitem__`, `in`: O(1) average, O(n) worst-case (hash collisions).
-  - `keys()`, `values()`, `items()`: O(n) to construct views, O(1) to iterate once created.
+  - `keys()`, `values()`, `items()`: O(1) to create (they are live views, not copies) and O(n) to iterate. `keys()` and `items()` views also support set operations, e.g. `d.keys() & other`.
   - `pop(key)`, `get(key)`: O(1) average.
-  - Higher memory footprint (~240 bytes per empty dict) to maintain hash table and handle collisions.
-  - Iteration order: insertion-order (Python 3.7+), but **do not rely on this for cross-version compatibility**.
+  - Higher memory than a list: an empty dict is 64 bytes and a populated one costs about 52 bytes per item (CPython 3.12, measured; the key and value objects are extra).
+  - Iteration follows insertion order (guaranteed by the language since 3.7); only avoid relying on it if you must support Python older than 3.7.
+  - **Subclassing gotcha:** overriding `__setitem__` in a `dict` subclass does *not* affect `update()` or the constructor (they bypass it). Subclass `collections.UserDict` when you need every write to go through your override.
 
 ## Specialized Collections (`collections` Module)
 
@@ -94,25 +97,26 @@
 | **deque**       | Mutable    | Yes   | O(n)            | O(1) at both ends| Fast queues/stacks, sliding windows | Random access/slicing    |
 | **defaultdict** | Mutable    | Yes   | O(1)            | O(1)             | Grouping/counting w/o key checks   | Strict missing-key control |
 | **OrderedDict** | Mutable    | Yes   | O(1)            | O(1)             | LRU caches, reordering on updates   | Python ≥3.7 plain dicts  |
-| **Counter**     | Mutable    | No    | O(1)            | O(1)             | Frequency tallying                  | Large sparse counts      |
+| **Counter**     | Mutable    | Yes   | O(1)            | O(1)             | Frequency tallying                  | Values that aren't counts |
 | **ChainMap**    | Mutable    | Yes   | O(k) for k maps | O(1)             | Layered configs, nested scopes      | Needing single underlying dict |
 | **namedtuple**  | Immutable  | Yes   | O(1) via name   | N/A              | Lightweight record objects          | Behavior-rich classes    |
 | **UserDict**, **UserList**, **UserString** | Mutable | Yes | Respective type | Respective type | Customizing behavior of built-ins | Direct subclassing built-ins |
 
 ### deque
 - **When to Use:**
-  – Real-time FIFO/LIFO queues, sliding window algorithms, BFS/DFS.
-  – Efficient rotation of collections (`rotate(n)`).
-  – Buffer with fast append/pop on both ends.
+  - Real-time FIFO/LIFO queues, sliding window algorithms, BFS/DFS.
+  - Efficient rotation of collections (`rotate(n)`).
+  - Buffer with fast append/pop on both ends.
 - **When to Avoid:**
-  – Random-access lookups or slicing—those are O(n).
-  – Frequent index-based updates; use `list` instead.
-  – Memory-constrained scenarios (overhead per node: ~56 bytes).
+  - Random-access lookups or slicing—those are O(n).
+  - Frequent index-based updates; use `list` instead.
+  - Memory-constrained scenarios with many tiny deques: an empty `deque` is 760 bytes (it allocates a 64-slot block up front), although a populated one costs only about 8 to 9 bytes per item (CPython 3.12, measured).
 - **Performance:**
-  – `append()`, `appendleft()`, `pop()`, `popleft()`: O(1)
-  – `rotate(n)`: O(n)
-  – Iteration: O(n), access by index: O(n)
-  – **Thread-safe for individual atomic operations** (append/pop from either end are safe from race conditions), but this isn't the same as `queue.Queue` — see the dedicated comparison below.
+  - `append()`, `appendleft()`, `pop()`, `popleft()`: O(1)
+  - `rotate(n)`: O(n)
+  - Iteration: O(n). Indexing is fast near either end but O(n) toward the middle.
+  - `deque(maxlen=n)` automatically discards from the opposite end when full, which gives you a ready-made "last n items" buffer.
+  - **Thread-safe for individual atomic operations** (append/pop from either end are safe from race conditions), but this isn't the same as `queue.Queue` — see the dedicated comparison below.
 
 ### `collections.deque` vs. `queue.Queue` — Don't Confuse These
 
@@ -135,7 +139,8 @@ Both support fast append/pop, but they solve **different problems**:
 - **When to Avoid:**
   - You need to strictly detect missing keys (avoiding silent defaults).
   - Silent initialization masks logic errors.
-  - Serialization (JSON doesn't handle defaultdict natively).
+  - Pickling with a lambda factory: `defaultdict(lambda: 0)` can't be pickled, while `defaultdict(int)` can. (`json.dumps` handles a defaultdict fine, since it is a `dict` subclass.)
+  - Lookup side effect: `d[missing]` **inserts** the default, so merely reading can grow the dict; `k in d` and `d.get(k)` do not insert.
 - **Performance:**
   - Same as dict: O(1) for get/set, with default factory invoked on miss.
   - Factory function called only for missing keys.
@@ -146,11 +151,11 @@ Both support fast append/pop, but they solve **different problems**:
   - Pre-3.7: preserve insertion order plus support methods like `move_to_end()`.
   - LRU cache implementations (reorder on access via `move_to_end()`).
   - Explicit ordering guarantees for backward compatibility.
+  - Order-sensitive equality: two `OrderedDict`s with the same items in a different order are **not** equal (`OrderedDict(a=1, b=2) == OrderedDict(b=2, a=1)` is `False`), unlike plain dicts. Also offers `popitem(last=False)`.
 - **When to Avoid:**
-  - Python 3.7+ when basic insertion order suffices (plain `dict` is faster, ~20% overhead reduction).
-  - Extreme performance requirements; plain `dict` is preferred.
+  - Python 3.7+ when plain insertion order is all you need: a plain `dict` is faster and uses about half the memory (measured: roughly 105 versus 52 bytes per item).
 - **Performance:**
-  - Slight overhead vs `dict` (~25-30% slower) due to doubly linked list maintenance.
+  - Extra bookkeeping (a doubly linked list) makes it slower and larger than a plain `dict`.
   - `move_to_end(key)`: O(1) operation.
   - Iteration: O(n), guaranteed insertion order.
 
@@ -159,15 +164,16 @@ Both support fast append/pop, but they solve **different problems**:
   - Counting frequencies of hashable items in one pass.
   - Finding most common elements via `.most_common(n)`.
   - Set-like operations on tallies (add/subtract counts).
+  - It is a `dict` subclass, so it keeps insertion order (3.7+), and a missing key reads as `0` without being inserted.
 - **When to Avoid:**
   - When you need custom ordering beyond counts.
-  - Sparse data where most keys have count=0 (memory overhead).
-  - Negative counts are rare; use manually if needed.
+  - You need negative or zero counts to survive arithmetic: `a - b` and `a + b` silently drop results that are zero or negative (use `a.subtract(b)` to keep negatives).
+  - Per-item data that isn't a count (use a plain `dict`).
 - **Performance:**
   - `update()` and lookups: O(1) per element; uses `dict` underneath.
-  - `.most_common(n)`: O(k log k) where k is number of unique elements.
+  - `.most_common(n)`: O(k log n) for k unique elements (it uses `heapq.nlargest`); `.most_common()` with no argument sorts everything, O(k log k).
   - Subtraction/intersection: O(n) where n is total keys.
-  - Memory: same as dict plus count storage (~28 bytes per entry).
+  - Memory: the same as a `dict` (the counts are just the values), about 52 bytes per item measured.
 
 ### ChainMap
 - **When to Use:**
@@ -177,11 +183,11 @@ Both support fast append/pop, but they solve **different problems**:
 - **When to Avoid:**
   - You must update all underlying maps at once (only updates first map).
   - Needing a single unified dict (use `.copy()` or dict merge instead).
-  – Performance-critical lookups across many layers.
+  - Performance-critical lookups across many layers.
 - **Performance:**
   - Lookup: checks each mapping in turn, O(k) for k maps; returns first match.
   - Insertion/deletion: only affects first map, O(1) per operation.
-  - Iteration: visits all keys from all maps; may see duplicates (first wins).
+  - Iteration yields each key **once** (no duplicates). `cm[key]` returns the value from the first map containing it, but the iteration order starts from the *last* map, so don't rely on it.
   - Memory: O(k) overhead for k mappings; no data duplication.
 
 ### namedtuple
@@ -194,8 +200,8 @@ Both support fast append/pop, but they solve **different problems**:
   - High inheritance complexity; use classes instead.
   - Large datasets (use NumPy structured arrays for better performance).
 - **Performance:**
-  - Attribute access: O(1) (faster than plain tuple unpacking for large tuples).
-  - Memory usage: comparable to tuple plus ~8 bytes per field name overhead.
+  - Attribute access is O(1): a named lookup that maps onto a tuple index.
+  - Memory is identical to a plain tuple of the same length (64 bytes for 3 fields). The field names live on the class, and instances have no `__dict__`.
   - Creation: `_make()` O(n); unpacking O(n).
   - Iteration: O(n), same as tuple.
 
@@ -229,6 +235,25 @@ heapq.heappush(tasks, (3, "low priority"))
 heapq.heappop(tasks)   # (1, "high priority") — smallest tuple wins
 ```
 
+**Tie-break gotcha:** when two entries have the same priority, `heapq` compares the *next* tuple element, and if that isn't comparable you get an error:
+
+```python
+import heapq
+
+h = []
+heapq.heappush(h, (1, {"job": "a"}))
+heapq.heappush(h, (1, {"job": "b"}))   # TypeError: '<' not supported between instances of 'dict' and 'dict'
+```
+The standard fix is a unique, increasing counter as a tie-breaker, which also makes equal priorities pop in insertion order:
+```python
+import heapq, itertools
+
+h = []
+counter = itertools.count()
+heapq.heappush(h, (1, next(counter), {"job": "a"}))
+heapq.heappush(h, (1, next(counter), {"job": "b"}))   # never compares the dicts
+```
+
 ### `bisect` — Keeping a List Sorted Without Re-sorting
 
 `bisect` provides binary-search insertion into an already-sorted list, avoiding an O(n log n) full re-sort every time you add one item.
@@ -251,15 +276,33 @@ bisect.insort(scores, 35)
 print(scores)   # [10, 25, 35, 40, 60] — inserted in the correct sorted position
 ```
 
+**Duplicates and keys:** `bisect_left` returns the position *before* any equal items and `bisect_right` (also called `bisect`) the position *after* them. Since Python 3.10 both accept a `key=` function, applied to the list elements only:
+```python
+import bisect
+
+L = [1, 2, 2, 2, 3]
+bisect.bisect_left(L, 2)    # 1
+bisect.bisect_right(L, 2)   # 4
+
+records = [("a", 1), ("b", 5), ("c", 9)]
+bisect.bisect(records, 5, key=lambda r: r[1])   # 2 — the search value is compared against the key of each element
+```
+
+## Also Worth Knowing
+
+- **`array.array('i', ...)`** stores raw C integers compactly (4 bytes per item), where a list pays an 8-byte pointer *plus* a 28-byte `int` object for each value. Handy for large numeric sequences when NumPy isn't available.
+- **`range`** is a lazy sequence, not a list: it is always 48 bytes, and `len`, indexing and `in` on integers are O(1) arithmetic (`999_999_999 in range(10**9)` is instant).
+- **Dict views behave like sets:** `d.keys() & other_keys`, `d1.keys() - d2.keys()` and `d.items() & other.items()` work without building intermediate sets.
+
 ## Common Pitfalls & Best Practices
 
 ### Mutability & Hashing
 - **Never use mutable objects (list, dict, set) as dict keys or set members**—they're unhashable.
-- **Mutable default arguments** in functions: `defaultdict(list)` is safe; `dict = {}` in function signature is not.
+- **Mutable default arguments** (`def f(x, bucket=[])`) share one object across every call; default to `None` and create the container inside the function (see `02-Functions.md`).
 
 ### Iteration Safety
 - **Don't modify a list while iterating over it** (causes skipped/repeated elements). Use list comprehension or `list.copy()` instead.
-- **Set/dict mutation during iteration** raises `RuntimeError`; use `.copy()` or create a list of items first.
+- **Set/dict mutation during iteration** raises `RuntimeError` when the *size* changes (adding or removing keys). Overwriting the value of an existing dict key is fine. Iterate over `.copy()` or a list of the items when you need to add or remove.
 
 ### Performance Traps
 - **Checking `x in list` is O(n)**; use `set` for large datasets with many lookups.
@@ -268,8 +311,8 @@ print(scores)   # [10, 25, 35, 40, 60] — inserted in the correct sorted positi
 - **Re-sorting a growing list on every insert is O(n log n) each time**; use `bisect.insort` (O(n) but with an O(log n) search) or a `heapq` if you only ever need the extreme value.
 
 ### Memory Awareness
-- **Empty containers still consume memory**: `[] → ~56 bytes`, `{} → ~240 bytes`, `set() → ~200 bytes`.
-- **Slicing creates new objects**: `lst[1:1000]` copies all 999 elements; consider generators if possible.
+- **Empty containers still consume memory** (CPython 3.12, 64-bit, via `sys.getsizeof`): `[]` is 56 bytes, `()` 40, `{}` 64, `set()` 216, `deque()` 760.
+- **Slicing creates a new list**: `lst[1:1000]` copies 999 references (not the objects themselves); use `itertools.islice` to iterate over a window without copying.
 
 ---
 
@@ -280,8 +323,8 @@ print(scores)   # [10, 25, 35, 40, 60] — inserted in the correct sorted positi
    - **No:** `tuple`, `frozenset`, `namedtuple`
 
 2. **Need ordering?**
-   - **Yes:** `list`, `tuple`, `dict` (3.7+), `deque`, `OrderedDict`, `namedtuple`, `ChainMap`
-   - **No:** `set`, `frozenset`, `Counter`
+   - **Yes:** `list`, `tuple`, `dict` (3.7+) and its subclasses `defaultdict`, `Counter` and `OrderedDict`, plus `deque` and `namedtuple`
+   - **No:** `set`, `frozenset`
 
 3. **Need O(1) random access by index?**
    - **Yes:** `list`, `tuple`, `namedtuple`
@@ -314,17 +357,21 @@ print(scores)   # [10, 25, 35, 40, 60] — inserted in the correct sorted positi
 
 ## Quick Reference: Memory & Performance
 
-| Collection  | Memory/Item | Empty Overhead | Insertion at End | Lookup | Membership | Notes |
-|-------------|-------------|---|---|---|---|---|
-| `list`      | 28-32 bytes | ~56 bytes | O(1) amortized | O(1) by index | O(n) | Dynamic resizing overhead |
-| `tuple`     | 28-32 bytes | ~56 bytes | N/A | O(1) by index | O(n) | Immutable, hashable |
-| `dict`      | ~80 bytes (key+value) | ~240 bytes | O(1) | O(1) by key | O(1) | Hash collision cost |
-| `set`       | ~24 bytes   | ~200 bytes | O(1) | N/A | O(1) | Unordered, unique only |
-| `frozenset` | ~24 bytes   | ~200 bytes | N/A | N/A | O(1) | Immutable set |
-| `deque`     | ~56 bytes   | ~80 bytes | O(1) both ends | O(n) by index | O(n) | Linked list structure |
-| `Counter`   | ~28 bytes (count only) | ~240 bytes | O(1) | O(1) | O(1) | Uses dict underneath |
-| `namedtuple`| 28-32 bytes | ~80 bytes | N/A | O(1) by name | O(n) | Lightweight, hashable |
-| `heapq` (on a list) | 28-32 bytes | ~56 bytes | O(log n) push | O(1) min only | O(n) | In-place min-heap over a list |
+| Collection  | Empty size | Per-item cost* | Insertion at end | Lookup | Membership | Notes |
+|-------------|-----------|----------------|------------------|--------|------------|-------|
+| `list`      | 56 B | 8 B (a pointer) | O(1) amortized | O(1) by index | O(n) | Over-allocates so appends are amortized O(1) |
+| `tuple`     | 40 B | 8 B | N/A | O(1) by index | O(n) | Immutable; hashable if all elements are |
+| `dict`      | 64 B | ~52 B | O(1) | O(1) by key | O(1) | Insertion-ordered (3.7+) |
+| `set`       | 216 B | ~42 B | O(1) | N/A | O(1) | Unordered, unique, hashable items |
+| `frozenset` | 216 B | ~42 B | N/A | N/A | O(1) | Immutable and hashable |
+| `deque`     | 760 B | ~8-9 B | O(1) both ends | O(n) toward the middle | O(n) | Stored in blocks of 64 items |
+| `Counter`   | 80 B | ~52 B | O(1) | O(1) | O(1) | `dict` subclass; ordered; missing key reads as 0 |
+| `OrderedDict` | 128 B | ~105 B | O(1) | O(1) | O(1) | Extra linked-list bookkeeping |
+| `defaultdict` | 72 B | ~52 B | O(1) | O(1) | O(1) | `d[missing]` inserts the default |
+| `namedtuple` | tuple-sized (64 B for 3 fields) | 8 B per field | N/A | O(1) by name or index | O(n) | No per-instance `__dict__` |
+| `heapq` (on a list) | 56 B | 8 B | O(log n) push | O(1) min only | O(n) | In-place min-heap over a list |
+
+\*Container overhead only, excluding the key and value objects themselves (a small `int` object is 28 bytes). Figures come from `sys.getsizeof` on 64-bit CPython 3.12 with 100,000 items and will vary by version and platform; use them for relative comparison, not exact budgeting.
 
 ## Interview Gotchas
 
@@ -333,3 +380,8 @@ print(scores)   # [10, 25, 35, 40, 60] — inserted in the correct sorted positi
 - **`deque` is not `queue.Queue`** — one is a general-purpose double-ended container, the other is a blocking, thread-safe handoff primitive for producer-consumer patterns.
 - **`heapq` is a min-heap only** — simulate a max-heap by negating values or using `(-priority, item)` tuples.
 - **`bisect` assumes the list is already sorted** — it won't warn you if it isn't; it'll just silently return a meaningless insertion point.
+- **`Counter` keeps insertion order and returns 0 for a missing key without inserting it**, but `a - b` and `a + b` drop non-positive counts (`subtract()` keeps them).
+- **`dict.keys()`, `.values()` and `.items()` are O(1) live views**, not copies, and `keys()`/`items()` support set operators.
+- **Subclass `UserDict`, not `dict`, when you override `__setitem__`**: `dict.update()` and the constructor bypass the override.
+- **`heapq` with equal priorities needs a tie-breaker** like `(priority, next(counter), item)`, or comparing the payloads can raise `TypeError`.
+- **A `namedtuple` is exactly as small as a tuple**; its field names are stored once on the class.
