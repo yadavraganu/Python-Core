@@ -1,10 +1,6 @@
 # Python One-Liners Cheat Sheet
 
-A curated set of compact, idiomatic Python expressions, organized by domain, with the interview-relevant gotchas called out.
-
-> **A note on `open(...).read()`:** the bare form never explicitly closes the file. CPython normally closes it immediately through reference counting (run with `python -X dev` and you'll see the `ResourceWarning` at that moment), but other implementations and exception paths don't promise that. It's fine for a throwaway script; in real code use `with open(...) as f:`. The same applies to every `open(...)` one-liner below.
-
----
+<br></br>
 
 ## 1. Basics and Quick Expressions
 
@@ -78,7 +74,7 @@ first, *middle, last = [1, 2, 3, 4, 5]
 square = lambda x: x * x
 ```
 
----
+<br></br>
 
 ## 2. Lists, Tuples, Sets, Dicts
 
@@ -186,7 +182,7 @@ from collections import deque
 dq = deque(L); dq.rotate(1)     # rotate right by 1
 ```
 
----
+<br></br>
 
 ## 3. Strings, Text and Regex
 
@@ -241,7 +237,7 @@ s.startswith("pre"); s.endswith("fix")
 clean = s.translate(str.maketrans("", "", ",.!?"))
 ```
 
----
+<br></br>
 
 ## 4. File, OS, Shell and Quick Scripting
 
@@ -300,7 +296,7 @@ python -m http.server 8000
 cat file | python -c "import sys; print(sum(int(x) for x in sys.stdin))"
 ```
 
----
+<br></br>
 
 ## 5. Networking, Web Requests, JSON, CSV
 
@@ -346,7 +342,7 @@ with open("out.csv", "w", newline="") as f:
     writer.writeheader(); writer.writerows(rows)
 ```
 
----
+<br></br>
 
 ## 6. Data Science, Numeric and Small Algorithms
 
@@ -412,7 +408,7 @@ mn, mx = min(L), max(L)
 norm = [(x - mn) / (mx - mn) if mx > mn else 0.0 for x in L]   # without the guard, [5, 5, 5] raises ZeroDivisionError
 ```
 
----
+<br></br>
 
 ## 7. Concurrency, Timing, Debugging, Introspection
 
@@ -478,9 +474,9 @@ logging.info("started with n=%s", n)
 assert len(L) > 0, "L must not be empty"      # stripped entirely under `python -O`, so never use it for input validation
 ```
 
----
+<br></br>
 
-## Interview-Favorite Gotchas to Remember
+## Favorite Gotchas to Remember
 
 - `chain.from_iterable` flattens **exactly one level**. For arbitrary depth you need recursion (the `flatten` generator above).
 - `sorted(d)` sorts only the **keys**; use `sorted(d.items(), key=...)` to sort by value.
