@@ -27,9 +27,9 @@ PositiveInt(-1)      # ValueError: must be positive
 
 ### `__del__` — The Finalizer
 Called when an object is about to be garbage-collected. **Do not rely on it for critical cleanup** (closing files, releasing locks) — its timing is not guaranteed:
-- In reference-counted CPython it usually runs promptly when the refcount hits zero, but objects in a **reference cycle** are only collected (and finalized) when the cycle-detecting GC runs — see `Garbage-Collection.md`.
+- In reference-counted CPython it usually runs promptly when the refcount hits zero, but objects in a **reference cycle** are only collected (and finalized) when the cycle-detecting GC runs — see `16-Garbage-Collection.md`.
 - At interpreter shutdown, globals and modules may already be torn down when `__del__` runs, causing confusing `NameError`s inside it.
-- Prefer a **context manager** (`__enter__`/`__exit__`, see `Context-Manager.md`) for deterministic cleanup instead.
+- Prefer a **context manager** (`__enter__`/`__exit__`, see `13-Context-Manager.md`) for deterministic cleanup instead.
 
 <br></br>
 
@@ -72,7 +72,7 @@ class NoHash:
 print(NoHash.__hash__)     # None
 {NoHash()}                   # TypeError: unhashable type: 'NoHash'
 ```
-If instances need to go in a `set`/dict key, define both, keeping the invariant **equal objects must have equal hashes**. Writing all four ordering methods by hand is repetitive — `functools.total_ordering` (covered in `Object-Oriented-Program.md`) derives the rest from `__eq__` plus one of them. Arithmetic operators (`__add__`, reflected forms like `__radd__`, and in-place forms like `__iadd__`) are also covered there in depth, since they fit naturally alongside operator-overloading design, not attribute access.
+If instances need to go in a `set`/dict key, define both, keeping the invariant **equal objects must have equal hashes**. Writing all four ordering methods by hand is repetitive — `functools.total_ordering` (covered in `11-Object-Oriented-Program.md`) derives the rest from `__eq__` plus one of them. Arithmetic operators (`__add__`, reflected forms like `__radd__`, and in-place forms like `__iadd__`) are also covered there in depth, since they fit naturally alongside operator-overloading design, not attribute access.
 
 <br></br>
 
@@ -85,7 +85,7 @@ If instances need to go in a `set`/dict key, define both, keeping the invariant 
 | `__setitem__` | `obj[key] = value` |
 | `__delitem__` | `del obj[key]` |
 | `__contains__` | `x in obj` — **falls back to `__iter__`** (linear scan) if undefined |
-| `__iter__`, `__next__` | `for x in obj`, `iter(obj)`, `next(obj)` — full protocol detailed in `Iterators-Generators.md` |
+| `__iter__`, `__next__` | `for x in obj`, `iter(obj)`, `next(obj)` — full protocol detailed in `10-Iterators-Generators.md` |
 | `__reversed__` | `reversed(obj)` |
 
 **`__contains__` fallback, confirmed by running it:** without `__contains__`, Python uses `__iter__` and checks each item in turn:
@@ -126,13 +126,13 @@ add5 = Adder(5)
 add5(10)          # 15
 callable(add5)      # True
 ```
-This is the same mechanism behind class-based decorators (see `Decorators.md`) and any "function-like" object that needs to carry state.
+This is the same mechanism behind class-based decorators (see `09-Decorators.md`) and any "function-like" object that needs to carry state.
 
 <br></br>
 
 ## 7. Context Manager Protocol — `__enter__`, `__exit__`
 
-Backs the `with` statement. Covered in full depth, including the exception-suppression rules and common pitfalls, in `Context-Manager.md` — included here only for completeness of the dunder-method overview.
+Backs the `with` statement. Covered in full depth, including the exception-suppression rules and common pitfalls, in `13-Context-Manager.md` — included here only for completeness of the dunder-method overview.
 
 <br></br>
 
@@ -150,7 +150,7 @@ Called **unconditionally** for every attribute assignment (`obj.name = value`). 
 Called on every `del obj.name`. Same infinite-recursion trap as `__setattr__`; bypass with `object.__delattr__(self, name)`.
 
 ### `__getattribute__(self, name)`
-Called **unconditionally for every attribute access**, before the instance `__dict__`/class/`__getattr__` chain is even consulted — this is the actual entry point for `obj.name`, implementing the full lookup algorithm described in `Internals.md` (data descriptor → instance `__dict__` → non-data descriptor/class attribute → `__getattr__`). Overriding it is the riskiest of the four, since calling `self.name` anywhere inside it recurses into itself; always go through `object.__getattribute__(self, name)`.
+Called **unconditionally for every attribute access**, before the instance `__dict__`/class/`__getattr__` chain is even consulted — this is the actual entry point for `obj.name`, implementing the full lookup algorithm described in `17-Internals.md` (data descriptor → instance `__dict__` → non-data descriptor/class attribute → `__getattr__`). Overriding it is the riskiest of the four, since calling `self.name` anywhere inside it recurses into itself; always go through `object.__getattribute__(self, name)`.
 
 **Key relationship:** `__getattr__` is only reached as a **fallback from `__getattribute__`** — specifically, when `__getattribute__` (default or overridden) raises `AttributeError`. If you override `__getattribute__` and it never raises `AttributeError` for a missing name, your `__getattr__` will never run at all.
 
@@ -262,7 +262,7 @@ Caught error: Deletion of 'stored_value' is not allowed.
 ```
 Note: `__delattr__` here only *raises* — it doesn't print any extra warning message before doing so, so the only lines produced are the `-->` trace line and the caught error, exactly as shown. (An earlier version of this example implied an extra "WARNING" line was printed; running the code confirms it isn't — the raised `AttributeError`'s message is the only indication, caught and printed by the surrounding `except` block.)
 
-**See also:** descriptors (`__get__`/`__set__`/`__delete__` on a *class*, not an instance) interact with this same lookup chain and take priority over instance `__dict__` for data descriptors — covered in full in `Python-Descriptors.md`.
+**See also:** descriptors (`__get__`/`__set__`/`__delete__` on a *class*, not an instance) interact with this same lookup chain and take priority over instance `__dict__` for data descriptors — covered in full in `14-Python-Descriptors.md`.
 
 <br></br>
 
@@ -272,15 +272,15 @@ Note: `__delattr__` here only *raises* — it doesn't print any extra warning me
 |---|---|---|---|
 | Object lifecycle | `__new__`, `__init__`, `__del__` | Instance creation/destruction | This file |
 | Representation | `__repr__`, `__str__`, `__format__` | `repr()`, `str()`/`print()`, `format()`/f-strings | This file |
-| Comparison | `__eq__`, `__lt__`, ..., `__hash__` | `==`, `<`, ..., `hash()` | This file + `Object-Oriented-Program.md` (`total_ordering`) |
-| Arithmetic | `__add__`, `__radd__`, `__iadd__`, ... | `+`, reflected `+`, `+=` | `Object-Oriented-Program.md` |
+| Comparison | `__eq__`, `__lt__`, ..., `__hash__` | `==`, `<`, ..., `hash()` | This file + `11-Object-Oriented-Program.md` (`total_ordering`) |
+| Arithmetic | `__add__`, `__radd__`, `__iadd__`, ... | `+`, reflected `+`, `+=` | `11-Object-Oriented-Program.md` |
 | Containers | `__len__`, `__getitem__`, `__contains__`, ... | `len()`, `obj[k]`, `in` | This file |
-| Iteration | `__iter__`, `__next__` | `for`, `iter()`, `next()` | `Iterators-Generators.md` |
+| Iteration | `__iter__`, `__next__` | `for`, `iter()`, `next()` | `10-Iterators-Generators.md` |
 | Truthiness | `__bool__` | `bool()`, `if obj:` | This file |
-| Callable | `__call__` | `obj(...)` | This file + `Decorators.md` |
-| Context manager | `__enter__`, `__exit__` | `with` | `Context-Manager.md` |
+| Callable | `__call__` | `obj(...)` | This file + `09-Decorators.md` |
+| Context manager | `__enter__`, `__exit__` | `with` | `13-Context-Manager.md` |
 | Attribute access | `__getattr__`, `__setattr__`, `__delattr__`, `__getattribute__`, `__dir__` | `obj.x`, `obj.x = v`, `del obj.x`, `dir(obj)` | This file (section 8) |
-| Descriptors | `__get__`, `__set__`, `__delete__` | Attribute access on a *class* attribute | `Python-Descriptors.md` |
+| Descriptors | `__get__`, `__set__`, `__delete__` | Attribute access on a *class* attribute | `14-Python-Descriptors.md` |
 
 <br></br>
 

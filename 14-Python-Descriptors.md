@@ -25,7 +25,7 @@ This is the foundation for `@property`, bound methods, `@classmethod`, `@staticm
 | `__delete__` | `__delete__(self, obj)` | `del instance.attr` |
 | `__set_name__` | `__set_name__(self, owner, name)` | Automatically, when the class body finishes executing |
 
-A descriptor doesn't need to implement all of them:
+A descriptor doesn't need to implement all of them, but **which methods it defines changes how it behaves** (see Section 3). Here is a descriptor with only `__get__`:
 
 ```python
 class ReadOnly:
@@ -41,8 +41,29 @@ class Config:
     version = ReadOnly("1.0")
 
 c = Config()
-print(c.version)     # "1.0"
-# c.version = "2.0"  # AttributeError: can't set attribute (no __set__)
+print(c.version)         # 1.0
+c.version = "2.0"        # no error! (explained below)
+print(c.version)         # 2.0 — the assignment created an instance attribute that now shadows the descriptor
+print(Config.version)    # 1.0 — the class-level descriptor is untouched
+```
+
+With only `__get__` it is a **non-data descriptor**, so assignment doesn't go through it at all: Python just stores `"2.0"` in the instance `__dict__`, which wins on later lookups. To make an attribute genuinely read-only, define `__set__`, even if it only raises:
+
+```python
+class ReadOnly:
+    def __init__(self, value):
+        self.value = value
+
+    def __get__(self, obj, objtype=None):
+        return self.value
+
+    def __set__(self, obj, value):
+        raise AttributeError("read-only attribute")
+
+class Config:
+    version = ReadOnly("1.0")
+
+Config().version = "2.0"     # AttributeError: read-only attribute
 ```
 
 Note `obj` is `None` when the descriptor is accessed via the class itself rather than an instance:
@@ -60,6 +81,24 @@ class A:
 print(A.x)          # <Descriptor object> — accessed via the class
 print(A().x)         # "instance value" — accessed via an instance
 ```
+
+### Functions Are Descriptors: Where Bound Methods Come From
+
+Every function defined in a class body is a (non-data) descriptor, and this is the mechanism that turns `obj.method` into a bound method:
+
+```python
+class F:
+    def f(self):
+        return "hi"
+
+obj = F()
+bound = F.f.__get__(obj, F)                          # what `obj.f` does behind the scenes
+print(bound())                                        # hi
+print(bound == obj.f)                                 # True
+print(obj.f.__self__ is obj, obj.f.__func__ is F.f)   # True True
+print(hasattr(F.f, "__get__"), hasattr(type(F.f), "__set__"))   # True False — has __get__, no __set__
+```
+`staticmethod` and `classmethod` are descriptors too: `staticmethod.__get__` hands back the plain function, while `classmethod.__get__` binds the class instead of the instance.
 
 ## 3. Data vs. Non-Data Descriptors
 
@@ -122,6 +161,10 @@ def object_getattribute(obj, name):
 
 (This is a simplified illustration of the real C implementation, but it captures the priority order correctly.)
 
+### Lookup on the Class Itself
+
+Reading an attribute through the class (`A.x`) goes through `type.__getattribute__`, which searches the class and its bases and, if the attribute it finds has `__get__`, calls `__get__(None, A)`. That is why descriptors are expected to handle `obj is None`.
+
 ## 5. `__set_name__` — Knowing Your Own Name
 
 Added in Python 3.6, `__set_name__` is called automatically once, right after the class body is executed, telling the descriptor what attribute name it was assigned to — so it doesn't need to be passed manually.
@@ -155,6 +198,12 @@ p = Person("Ana", 30)
 ```
 
 Without `__set_name__`, you'd have to pass the attribute name redundantly to every descriptor instance (`name = LoggedAttribute("name")`), which is error-prone.
+
+### `__set_name__` Caveats
+
+- It is called once per descriptor during **class creation**. A descriptor attached afterwards (`H.y = Desc()`) never receives its name.
+- If one descriptor instance is assigned to two attribute names, `__set_name__` is called for each, which is how `functools.cached_property` detects and rejects that.
+- In Python 3.12 an exception raised inside `__set_name__` propagates unchanged, with a note such as `Error calling __set_name__ on 'Bad' instance 'b' in 'Z'`. Before 3.12 it was wrapped in a `RuntimeError`.
 
 ## 6. Storage Strategies (and a Classic Bug)
 
@@ -205,7 +254,7 @@ a1.x, a2.x = "first", "second"
 print(a1.x, a2.x)      # "first second" — correct, independent storage
 ```
 
-### Fix 2 — a `WeakKeyDictionary` (when you can't rely on `obj.__dict__`, e.g. with `__slots__`)
+### Fix 2 — a `WeakKeyDictionary` (when instances have no `__dict__`)
 
 ```python
 import weakref
@@ -223,11 +272,36 @@ class SlottedDescriptor:
         self.data[obj] = value
 
 class A:
-    __slots__ = ()          # no per-instance __dict__ available
+    __slots__ = ("__weakref__",)    # no per-instance __dict__, but instances can still be weakly referenced
     x = SlottedDescriptor()
 ```
 
-`WeakKeyDictionary` avoids keeping instances alive forever just because the descriptor references them.
+`WeakKeyDictionary` avoids keeping instances alive forever just because the descriptor references them. Two caveats:
+
+- Instances must support weak references. With a plain `__slots__ = ()`, setting the attribute fails with `TypeError: cannot create weak reference to 'A' object`; add `"__weakref__"` to `__slots__` as above.
+- The instances are used as dictionary keys, so they must be hashable, and two instances that compare equal and hash equal would share one entry.
+
+### Fix 3 — store the value in a slot named by `__set_name__` (best fit for `__slots__`)
+
+```python
+class SlotStore:
+    def __set_name__(self, owner, name):
+        self.slot = "_" + name
+
+    def __get__(self, obj, objtype=None):
+        return self if obj is None else getattr(obj, self.slot)
+
+    def __set__(self, obj, value):
+        setattr(obj, self.slot, value)
+
+class B:
+    __slots__ = ("_x",)            # the descriptor stores its value in this slot
+    x = SlotStore()
+
+b = B()
+b.x = 9
+print(b.x)    # 9
+```
 
 ## 7. Building `@property` From Scratch
 
@@ -319,6 +393,8 @@ class Positive:
         self.name = "_" + name
 
     def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self                 # `Product.price` returns the descriptor instead of crashing
         return obj.__dict__[self.name]
 
     def __set__(self, obj, value):
@@ -385,7 +461,7 @@ Descriptors can also be overridden per-subclass by simply reassigning the attrib
 
 ## 10. `functools.cached_property`
 
-The standard library provides a ready-made, thread-unsafe-by-default version of the lazy-attribute pattern from Section 8:
+The standard library provides a ready-made version of the lazy-attribute pattern from Section 8:
 
 ```python
 from functools import cached_property
@@ -405,6 +481,13 @@ print(r.total)     # cached, no recomputation
 ```
 
 Unlike `@property`, `cached_property` is a **non-data descriptor** by design — exactly so the cached value in `obj.__dict__` can take over on subsequent lookups, same as the hand-rolled `LazyProperty` above.
+
+Behaviors worth knowing:
+
+- **Clearing the cache:** `del r.total` removes the cached value, so the next access recomputes it.
+- **It needs an instance `__dict__`.** On a class with `__slots__ = ()` it raises `TypeError: No '__dict__' attribute on 'CPS' instance to cache 'v' property.`
+- **One name only.** Assigning the same `cached_property` to two names raises `TypeError: Cannot assign the same cached_property to two different names`.
+- **Threads:** since Python 3.12 `cached_property` takes no lock, so in multi-threaded code the getter can run more than once for the same instance. Before 3.12 an internal lock serialized calls but caused contention between unrelated instances.
 
 ## 11. Descriptors vs. `__getattr__`/`__getattribute__`
 
@@ -427,8 +510,12 @@ These solve related but distinct problems:
 1. **Storing state on `self` inside the descriptor** instead of on the instance — causes state to leak across all instances sharing that descriptor (see Section 6).
 2. **Forgetting `if obj is None: return self`** in `__get__` — breaks introspection like `ClassName.attribute`.
 3. **Defining `__set__` unintentionally** (even as a no-op) — turns a non-data descriptor into a data descriptor, changing priority versus the instance `__dict__`.
-4. **Using `__slots__` alongside a descriptor that assumes `obj.__dict__` exists** — will raise `AttributeError`; use a `WeakKeyDictionary` or a slot name instead.
+4. **Using `__slots__` alongside a descriptor that assumes `obj.__dict__` exists** — it will fail; store the value in a named slot (Fix 3 in Section 6), or use a `WeakKeyDictionary` and include `"__weakref__"` in `__slots__`.
 5. **Not handling `__set_name__` when the same descriptor class backs several attributes** — without it, each attribute needs its storage key passed explicitly, which is easy to get wrong.
+6. **Expecting a descriptor without `__set__` to be read-only** — assignment silently shadows it in the instance `__dict__` (Section 2). Define `__set__` and raise.
+7. **Assigning to the attribute name on the *class*** (`W.x = 5`) replaces the descriptor entirely; `__set__` only intercepts assignment through an instance.
+8. **Attaching a descriptor after class creation** — `__set_name__` is never called for it.
+9. **Built-in `property` error wording:** a property without a setter raises `AttributeError: property 'x' of 'T' object has no setter` (3.12 wording; older versions said `can't set attribute`).
 
 ## 14. Practice Exercises
 

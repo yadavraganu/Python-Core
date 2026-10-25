@@ -2,7 +2,7 @@
 
 Python uses a private heap space where all objects and data structures reside. This heap is managed by the Python memory manager; programmers don't access it directly.
 
-Within this private heap, Python's small-object allocator (`pymalloc`) handles the huge number of small, short-lived objects typical code creates, via an arena/pool/block system — covered in full in `CPython-Object-Model.md`. On top of that memory layer, Python primarily uses a hybrid approach to decide **when an object's memory can be reclaimed**, combining:
+Within this private heap, Python's small-object allocator (`pymalloc`) handles the huge number of small, short-lived objects typical code creates, via an arena/pool/block system — covered in full in `23-CPython-Object-Model.md`. On top of that memory layer, Python primarily uses a hybrid approach to decide **when an object's memory can be reclaimed**, combining:
 
 - **Reference counting** (primary mechanism)
 - **Generational (cyclic) garbage collection** (a backstop for reference cycles)
@@ -11,7 +11,7 @@ Within this private heap, Python's small-object allocator (`pymalloc`) handles t
 
 ## 1. Reference Counting
 
-Every object has a reference count — an integer tracking how many references point to it (`ob_refcnt` in the `PyObject` header, see `CPython-Object-Model.md`).
+Every object has a reference count — an integer tracking how many references point to it (`ob_refcnt` in the `PyObject` header, see `23-CPython-Object-Model.md`).
 
 **Incrementing** happens when:
 - A new variable refers to the object.
@@ -66,9 +66,9 @@ node2.next = node1   # cyclic reference
 
 ---
 
-## 2. Generational Garbage Collection (Tracing Collector)
+## 2. Generational Garbage Collection (the Cycle Detector)
 
-To catch what reference counting can't, Python runs a separate, periodic **generational, mark-and-sweep** tracing collector, based on the **generational hypothesis**: most objects die young, and a small fraction live a long time.
+To catch what reference counting can't, Python runs a separate, periodic **generational cycle detector**, based on the **generational hypothesis**: most objects die young, and a small fraction live a long time. (It is often loosely called "mark-and-sweep", but CPython's algorithm is different; see below.)
 
 Objects are grouped into three generations by age:
 
@@ -76,11 +76,17 @@ Objects are grouped into three generations by age:
 - **Generation 1 (middle-aged):** survived at least one Gen 0 collection; collected less often.
 - **Generation 2 (oldest):** survived multiple collections; collected least often. There is **no Generation 3** — once an object reaches Gen 2, it simply stays there and gets re-examined on every full collection from then on.
 
-### How a Collection Runs (Mark-and-Sweep)
+### How a Collection Runs (Subtracting Internal References)
 
-1. **Mark phase:** starting from a set of "roots" (globals, the call stack), the collector traverses the object graph and marks everything reachable as alive.
-2. **Sweep phase:** everything left unmarked is garbage — unreachable from any live part of the program, *regardless of its reference count* — and is deallocated. This is exactly how a cyclic pair with external references removed gets reclaimed: nothing marks them as reachable, cycle or not.
-3. **Promotion:** objects surviving a Gen 0 collection move to Gen 1; surviving Gen 1 moves them to Gen 2.
+CPython does **not** start from the globals and the call stack and mark everything it can reach. Instead it works on the container objects of the generation being collected and asks which of them are referenced from *outside* that set:
+
+1. **Copy the counts:** for each tracked object in the generation, set a working counter `gc_refs` equal to its reference count.
+2. **Subtract internal references:** visit every object's referents (via its `tp_traverse` slot) and decrement `gc_refs` of each referent that is in the same generation. After this step, `gc_refs` is the number of references coming from **outside** the generation (globals, the stack, older generations).
+3. **Find what is reachable:** objects whose `gc_refs` is still above zero are being used from outside, so they are alive, and so is everything reachable from them. Everything else is *tentatively unreachable*: only referenced by other garbage.
+4. **Finalize and free:** `__del__` finalizers and weakref callbacks run for the unreachable objects (in a safe order since PEP 442), the collector re-checks that nothing was resurrected, then it clears the objects' references so their reference counts fall to zero and they are deallocated.
+5. **Promotion:** objects that survive a Gen 0 collection move to Gen 1; surviving Gen 1 moves them to Gen 2.
+
+This is why a cycle with a single outside reference survives a collection, and why it disappears as soon as the last outside reference is dropped (confirmed by running it): the outside reference keeps the `gc_refs` of some member above zero, which rescues the whole cycle.
 
 ### What Triggers a Collection
 
@@ -88,15 +94,26 @@ Each generation has a threshold (`gc.get_threshold()`, default `(700, 10, 10)` �
 
 ### Not Every Object Is Tracked
 
-Only objects that can **hold references to other objects** ("container" types — instances, lists, dicts, sets, most tuples) are tracked by the cycle collector at all. Simple scalars that can't participate in a cycle are skipped entirely:
+Only objects that **can** hold references to other objects ("container" types) are tracked by the cycle detector, and CPython trims the set further as it goes:
 
 ```python
 import gc
-gc.is_tracked(5)          # False — an int can't reference anything else
-gc.is_tracked("hello")    # False — same for str
-gc.is_tracked([1, 2, 3])   # True — a list could hold a reference back to itself
+
+gc.is_tracked(5)           # False — an int can't reference anything else
+gc.is_tracked("hello")     # False — same for str
+gc.is_tracked([1, 2, 3])   # True  — a list could hold a reference back to itself
+
+d = {}
+gc.is_tracked(d)           # False — an empty dict starts out untracked...
+d["k"] = [1]
+gc.is_tracked(d)           # True  — ...and becomes tracked once it holds a container
+
+t = tuple([1, 2, 3])
+gc.is_tracked(t)           # True  — tuples are tracked when created
+gc.collect()
+gc.is_tracked(t)           # False — a collection found nothing inside that could form a cycle
 ```
-This is a nice detail if asked "does the GC have to check every object" — no, untrackable scalar types are excluded by construction, cutting the collector's workload.
+Tuples are untracked **lazily**, the first time a collection examines them and finds only untrackable contents, while a dict starts untracked and only becomes tracked when a trackable value is stored in it. (A tuple written as a literal constant like `(1, 2, 3)` is typically already untracked by the first collection after the code is compiled, which is why a quick check can seem to give inconsistent answers.) This trimming keeps the collector's workload well below "every live object."
 
 ---
 
@@ -190,6 +207,14 @@ Other common tools in the module:
 
 ---
 
+## Version Note: the 3.14 Incremental Collector Came and Went
+
+Everything above describes the three-generation collector used through Python 3.13 and again from **3.14.5** onward. Python 3.14.0 through 3.14.4 shipped a different design: an *incremental* collector with only two generations (young and old), intended to shorten pause times on large heaps. After reports of significant memory pressure in production, **3.14.5 (May 2026) reverted to the 3.13 generational collector**, and the revert also applies to 3.15.
+
+- On 3.13, 3.14.5 and later, and 3.15, the behavior in this guide applies, including three thresholds from `gc.get_threshold()`.
+- On 3.14.0 to 3.14.4 the generation behavior differed, so details about generations and thresholds may not match those releases.
+- `sys.version` tells you which interpreter you have. If a blog post praises or criticizes "the new 3.14 GC", check its date against this history.
+
 ## Notes & Gotchas
 
 - **Reference counting is immediate; the generational collector is a periodic backstop specifically for cycles** — a strong answer distinguishes these two mechanisms rather than treating "Python's GC" as one monolithic thing.
@@ -200,3 +225,6 @@ Other common tools in the module:
 - **`weakref` prevents a cycle from forming in the first place**, rather than relying on the tracing collector to clean one up after the fact — the standard fix for parent/child or observer/subject back-references, and a common follow-up question after discussing cycles.
 - **There is no Generation 3** — Gen 2 is the ceiling; survivors just stay there and get rechecked on future full collections.
 - **Disabling `gc` entirely can boost throughput for short-lived scripts that create no cycles**, but is risky in long-running processes, since any cycle created will leak for the process's lifetime without a manual `gc.collect()`.
+- **CPython's cycle detector isn't a textbook mark-and-sweep from the roots.** It subtracts references that come from inside the generation and keeps what is still referenced from outside; knowing this explains why one outside reference rescues a whole cycle.
+- **Tracking is lazy and selective:** tuples are tracked at creation and untracked by the first collection that finds only untrackable contents; dicts start untracked and become tracked when they hold a container.
+- **The 3.14 incremental GC was reverted in 3.14.5**, so "Python 3.14 has two generations" is only true of 3.14.0 to 3.14.4.

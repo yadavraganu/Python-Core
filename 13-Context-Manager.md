@@ -143,6 +143,18 @@ exit A
 **Exception visibility across managers:** if the block raises, `__exit__` is called on each manager in reverse order, and the *first* one that returns truthy stops the exception from reaching the ones further out. In other words, an inner manager can suppress an exception before an outer manager's `__exit__` even sees it:
 
 ```python
+class CM:
+    def __init__(self, name, suppress=False):
+        self.name, self.suppress = name, suppress
+
+    def __enter__(self):
+        print(f"enter {self.name}")
+        return self
+
+    def __exit__(self, exc_type, exc_value, tb):
+        print(f"exit {self.name}, exc={exc_type.__name__ if exc_type else None}")
+        return self.suppress
+
 with CM("outer"), CM("inner", suppress=True):
     raise ValueError("boom")
 # exit inner, exc=ValueError   <- inner sees it and suppresses

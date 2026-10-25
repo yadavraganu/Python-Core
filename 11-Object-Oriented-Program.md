@@ -29,8 +29,12 @@ class Dog:
     def __init__(self, name):
         self.name = name             # instance attribute (per object)
 
+d1 = Dog("Rex")
 print(Dog.species)        # accessed via class
 print(d1.species)         # accessed via instance too
+
+d1.species = "Wolf"      # assigning through an instance creates an INSTANCE attribute that shadows the class one
+print(d1.species, Dog.species)   # Wolf Canis familiaris — the shared class attribute is unchanged
 ```
 ### 3. Instance, Class, and Static Methods
 
@@ -366,6 +370,19 @@ class FlyingCar:
 Because a composed object is just an attribute, it can be **replaced after construction** — something a fixed inheritance hierarchy can't do:
 
 ```python
+class GasEngine:
+    def start(self): return "Vroom! Engine roaring."
+
+class ElectricEngine:
+    def start(self): return "Silent electric hum..."
+
+class Car:                                   # the injected-engine Car from 8.2
+    def __init__(self, engine):
+        self.engine = engine
+
+    def start(self):
+        return self.engine.start()
+
 car = Car(GasEngine())
 print(car.start())          # Vroom! Engine roaring.
 
