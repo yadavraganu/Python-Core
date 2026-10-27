@@ -64,31 +64,202 @@ node2.next = node1   # cyclic reference
 
 ## 2. Generational Garbage Collection (the Cycle Detector)
 
-To catch what reference counting can't, Python runs a separate, periodic **generational cycle detector**, based on the **generational hypothesis**: most objects die young, and a small fraction live a long time. (It is often loosely called "mark-and-sweep", but CPython's algorithm is different; see below.)
+Reference counting frees most objects the moment they are no longer used, but it can never free a **cycle**. The cycle detector (the `gc` module) is the second mechanism, and its only job is to find and free cycles. This section explains three things using one small example: **what a generation is, when the detector runs, and what it does when it runs.**
 
-Objects are grouped into three generations by age:
+### 2.1 The Example We Will Use
 
-- **Generation 0 (youngest):** newly created objects; collected most frequently.
-- **Generation 1 (middle-aged):** survived at least one Gen 0 collection; collected less often.
-- **Generation 2 (oldest):** survived multiple collections; collected least often. There is **no Generation 3** — once an object reaches Gen 2, it simply stays there and gets re-examined on every full collection from then on.
+It is the same `Node` class from Section 1, plus a function that creates a cycle and then throws it away:
 
-### How a Collection Runs (Subtracting Internal References)
+```python
+import gc
 
-CPython does **not** start from the globals and the call stack and mark everything it can reach. Instead it works on the container objects of the generation being collected and asks which of them are referenced from *outside* that set:
+def make_cycle():
+    a, b = Node(1), Node(2)
+    a.next, b.next = b, a      # a and b point at each other
+```
 
-1. **Copy the counts:** for each tracked object in the generation, set a working counter `gc_refs` equal to its reference count.
-2. **Subtract internal references:** visit every object's referents (via its `tp_traverse` slot) and decrement `gc_refs` of each referent that is in the same generation. After this step, `gc_refs` is the number of references coming from **outside** the generation (globals, the stack, older generations).
-3. **Find what is reachable:** objects whose `gc_refs` is still above zero are being used from outside, so they are alive, and so is everything reachable from them. Everything else is *tentatively unreachable*: only referenced by other garbage.
-4. **Finalize and free:** `__del__` finalizers and weakref callbacks run for the unreachable objects (in a safe order since PEP 442), the collector re-checks that nothing was resurrected, then it clears the objects' references so their reference counts fall to zero and they are deallocated.
-5. **Promotion:** objects that survive a Gen 0 collection move to Gen 1; surviving Gen 1 moves them to Gen 2.
+When `make_cycle()` returns, the names `a` and `b` disappear, but each Node is still referenced by the other one, so each reference count is 1 and refcounting cannot free them. They are **garbage that only the cycle detector can remove.**
 
-This is why a cycle with a single outside reference survives a collection, and why it disappears as soon as the last outside reference is dropped (confirmed by running it): the outside reference keeps the `gc_refs` of some member above zero, which rescues the whole cycle.
+### 2.2 What Is a Generation?
 
-### What Triggers a Collection
+A generation is simply **a list of objects grouped by age.** Python keeps three of them:
 
-Each generation has a threshold (`gc.get_threshold()`, default `(700, 10, 10)` — confirmed by running it). Gen 0's counter increases with each allocation not yet matched by a deallocation; once it exceeds `threshold0`, a Gen 0 collection runs. Collections cascade upward: after a certain number of Gen 0 collections (tracked against `threshold1`), a Gen 1 collection runs too (which also sweeps Gen 0); similarly, enough Gen 1 collections trigger a full Gen 2 collection (sweeping everything). This cascading is *why* older generations are checked far less often than Gen 0, keeping the common case (short-lived objects) cheap.
+| Generation | What is in it | How often it is checked |
+|---|---|---|
+| 0 | brand-new objects | very often |
+| 1 | objects that survived one generation-0 check | less often |
+| 2 | objects that survived a generation-1 check | rarely |
 
-### Not Every Object Is Tracked
+Every new object starts in generation 0. Each time an object **survives** a check of its generation, it moves up one level. There is no generation 3: generation 2 is where long-lived objects stay.
+
+**Why bother?** Because most objects die young. A function creates temporary objects and drops them straight away. By checking the newest objects often and the old ones rarely, Python finds most garbage cheaply and avoids repeatedly rescanning the long-lived objects your program keeps for its whole run.
+
+You can watch one object make the journey:
+
+```python
+gc.collect()                  # start clean
+gc.disable()                  # no automatic runs while we watch, so nothing surprises us
+
+keep = Node(99)               # a long-lived object
+
+def where(obj):               # which generation list is this object in?
+    for g in range(3):
+        if any(o is obj for o in gc.get_objects(generation=g)):
+            return g
+
+print(where(keep))            # 0  - new objects start in generation 0
+gc.collect(0)                 # check generation 0 only: keep survives
+print(where(keep))            # 1  - promoted
+gc.collect(1)                 # check generations 0 and 1
+print(where(keep))            # 2  - promoted again
+gc.collect()                  # a full check
+print(where(keep))            # 2  - it stays in the oldest generation
+
+gc.enable()
+```
+
+### 2.3 When Does It Run? (The Trigger)
+
+Python does not check on a timer. It counts. Each generation has a **counter** and a **threshold**:
+
+```python
+print(gc.get_threshold())     # (700, 10, 10)
+print(gc.get_count())         # the three counters right now, for example (31, 2, 0)
+```
+
+What each counter measures:
+
+| Counter | Goes up when | Goes down when |
+|---|---|---|
+| `count0` | a new container object is created | one is freed (for example by reference counting) |
+| `count1` | a generation-0 check finishes | (reset when generation 1 is checked) |
+| `count2` | a generation-1 check finishes | (reset when generation 2 is checked) |
+
+So `count0` is roughly "new objects created minus objects freed since the last check." Watch it with our example. Objects that refcounting frees cancel out, but cycle objects stay counted:
+
+```python
+gc.collect()
+start = gc.get_count()[0]
+
+keep = [Node(i) for i in range(100)]      # 100 Nodes + 1 list = 101 new objects
+after_creating = gc.get_count()[0]
+del keep                                   # reference counting frees all 101 right away
+after_freeing = gc.get_count()[0]
+print(start, after_creating, after_freeing)     # for example: 0 102 2
+
+gc.collect()
+start = gc.get_count()[0]
+for _ in range(50):
+    make_cycle()                           # 100 Nodes that refcounting cannot free
+print(start, gc.get_count()[0])            # for example: 0 102
+```
+(Each reading can be off by one or two because the call that reads the counter creates a small object itself.) Freed objects cancel out, but the cycle objects pile up, and that pile is what eventually triggers the detector.
+
+**The rule:** after a new object is created, Python looks at the generations from oldest to youngest, and the first one whose counter is **greater than** its threshold gets checked. Checking generation N also checks every younger generation.
+
+1. `count0` goes above **700**: check generation 0.
+2. `count1` goes above **10** (that is, after 11 generation-0 checks): check generation 1 as well.
+3. `count2` goes above **10** (after 11 generation-1 checks) **and** the 25% rule below allows it: check generation 2, which means everything.
+
+Now let the detector run on its own and watch it. `gc.callbacks` lets us print a line when each check starts and stops:
+
+```python
+def watch(phase, info):
+    if phase == "start":
+        print(f"generation {info['generation']} check starting, counters = {gc.get_count()}")
+    else:
+        print(f"   done, freed {info['collected']} objects")
+
+gc.collect()                  # reset the counters to (0, 0, 0)
+gc.callbacks.append(watch)
+
+for _ in range(800):          # 800 calls create 1,600 Node objects
+    make_cycle()
+
+gc.callbacks.remove(watch)
+```
+Typical output (the exact numbers can differ by a few):
+```
+generation 0 check starting, counters = (702, 0, 0)
+   done, freed 698 objects
+generation 0 check starting, counters = (701, 1, 0)
+   done, freed 700 objects
+```
+Read it like this:
+
+- Each call adds 2 objects, so after about 350 calls `count0` passes 700 (it shows **701 or 702**) and generation 0 is checked.
+- That check finds that nearly all of them (about 700) are unreachable cycles and frees them. `count0` drops back to about 0.
+- Because a generation-0 check just finished, `count1` is now 1 (see the second line). Generation 1 will be checked on the 11th trigger, not before.
+
+Over a longer run you can count how often each generation is checked. In one run of 20,000 `make_cycle()` calls, generation 0 was checked 53 times and generation 1 was checked 4 times: roughly one trigger in every eleven escalates to generation 1.
+
+**What about generation 2?** A full check has to look at *every* tracked object in the program, which gets expensive as programs grow. So CPython adds an extra rule on top of the threshold: it only runs a full check when the number of objects that have survived since the last full check is more than **25%** of the number that survived the last one. You can see the rule at work:
+
+```python
+# 100,000 calls where every object is garbage that dies young:      generation 2 was checked 0 times
+# 100,000 calls where we also keep one long-lived object each time: generation 2 was checked 3 times
+```
+When everything dies young there is nothing old to re-examine, so full checks are skipped. They only happen once enough objects are *surviving* into the oldest generation.
+
+You can also trigger checks yourself: `gc.collect()` runs a full check, and `gc.collect(0)` or `gc.collect(1)` check just the younger generations.
+
+### 2.4 What Happens During a Check? (The Algorithm, Step by Step)
+
+Here is what the detector does to the generation it is checking. Python does **not** start from your global variables and walk outwards. It asks a simpler question: *"Is this object referenced from outside this group of objects?"* If not, only other garbage is holding it.
+
+It uses a scratch number called `gc_refs` for each object, and works in five steps. Follow our two-node cycle through them.
+
+**Case 1: both names `a` and `b` are gone** (what `make_cycle()` leaves behind):
+
+| Step | What the detector does | Node `a` | Node `b` |
+|---|---|---|---|
+| 1. Copy | `gc_refs` = the object's reference count | 1 | 1 |
+| 2. Subtract internal references | for every reference *between objects in this group*, take 1 off the target | `b` points at `a`: 1 - 1 = **0** | `a` points at `b`: 1 - 1 = **0** |
+| 3. Find what is still used | anything with `gc_refs` above 0 is referenced from outside, so it is alive (and so is everything it reaches) | 0: not used | 0: not used |
+| 4. Free the rest | run `__del__` and weakref callbacks, then clear the unreachable objects' references so their counts drop to 0 and they are deallocated | freed | freed |
+| 5. Promote survivors | anything that was kept moves up one generation | n/a | n/a |
+
+Both objects ended with `gc_refs` of 0 in step 2: all of their references came from each other, nothing outside the group uses them, so they are garbage.
+
+**Case 2: you still hold the name `a`**, so one object is used from outside:
+
+| Step | Node `a` | Node `b` |
+|---|---|---|
+| 1. Copy | reference count 2 (the name `a`, plus `b.next`) | 1 (just `a.next`) |
+| 2. Subtract internal references | 2 - 1 (from `b`) = **1** | 1 - 1 (from `a`) = **0** |
+| 3. Find what is still used | 1 is above 0: referenced from outside, so **alive** | reachable from `a`, so it is **rescued** too |
+| 4. Free the rest | nothing to free | nothing to free |
+
+You can run both cases and see it:
+
+```python
+gc.collect()
+gc.disable()
+
+a, b = Node(1), Node(2)
+a.next, b.next = b, a
+import weakref
+wa, wb = weakref.ref(a), weakref.ref(b)        # weak references let us check if they still exist
+
+del b                                           # only the NAME b is gone; the name a remains
+print(gc.collect(), wa() is not None, wb() is not None)    # 0 True True   - nothing freed, both alive
+
+del a                                           # now nothing outside refers to the cycle
+print(gc.collect(), wa() is not None, wb() is not None)    # 2 False False - both freed
+
+gc.enable()
+```
+One outside reference was enough to keep the whole cycle alive, and removing it let the detector free both objects on the next check.
+
+### 2.5 The Whole Story in One Timeline
+
+1. `make_cycle()` runs. Two new Nodes are born in **generation 0** and `count0` goes up by 2.
+2. The function returns. The names vanish, but each Node still has a reference count of 1, so refcounting leaves them alone. They are garbage sitting in generation 0.
+3. After enough calls, `count0` passes **700**. The detector checks generation 0 using the five steps above, finds the garbage cycles, and frees them. Anything that was still in use moves to generation 1. `count0` resets and `count1` goes up by 1.
+4. This repeats. On the 11th trigger `count1` passes **10**, so generation 1 is checked as well.
+5. Generation 2 is only checked when `count2` passes **10** *and* enough objects have survived into it (the 25% rule), so long-lived objects are rescanned rarely.
+
+### 2.6 Not Every Object Is Tracked
 
 Only objects that **can** hold references to other objects ("container" types) are tracked by the cycle detector, and CPython trims the set further as it goes:
 
@@ -109,8 +280,7 @@ gc.is_tracked(t)           # True  — tuples are tracked when created
 gc.collect()
 gc.is_tracked(t)           # False — a collection found nothing inside that could form a cycle
 ```
-Tuples are untracked **lazily**, the first time a collection examines them and finds only untrackable contents, while a dict starts untracked and only becomes tracked when a trackable value is stored in it. (A tuple written as a literal constant like `(1, 2, 3)` is typically already untracked by the first collection after the code is compiled, which is why a quick check can seem to give inconsistent answers.) This trimming keeps the collector's workload well below "every live object."
-
+Tuples are untracked **lazily**, the first time a collection examines them and finds only untrackable contents, while a dict starts untracked and only becomes tracked when a trackable value is stored in it. (A tuple written as a literal constant like `(1, 2, 3)` is typically already untracked by the first collection after the code is compiled, which is why a quick check can seem to give inconsistent answers.) A tracked dict whose contents later become untrackable is untracked by a full collection. This trimming keeps the collector's workload well below "every live object."
 
 ## 3. `__del__` and Cycles: An Outdated Worry
 
