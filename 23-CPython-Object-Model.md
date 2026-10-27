@@ -1,10 +1,10 @@
 # CPython Object Model & Memory Internals
 
-This covers what actually happens in memory beneath Python's high-level syntax — the object model, the custom small-object allocator, and how `dict`, `list`, and `str` are represented internally. Pairs directly with `Internals.md` (module loading, bytecode execution, attribute lookup) and `Garbage_Collection.md` (cycle detection).
+This covers what actually happens in memory beneath Python's high-level syntax — the object model, the custom small-object allocator, and how `dict`, `list`, and `str` are represented internally.
 
 ## 1. The CPython Object Model — `PyObject`
 
-Every single Python object — an `int`, a `list`, a custom class instance, even a function — is, in C, a `PyObject*` (a pointer to a `PyObject` struct). Every such struct shares a common header:
+Every single Python object — an `int`, a `list`, a custom class instance, even a function is, in C, a `PyObject*` (a pointer to a `PyObject` struct). Every such struct shares a common header:
 
 ```c
 typedef struct _object {
@@ -13,27 +13,25 @@ typedef struct _object {
 } PyObject;
 ```
 
-- **`ob_refcnt`** — the reference count. This is the mechanism `sys.getrefcount(obj)` reads, and it's the foundation of CPython's **primary** garbage-collection strategy: when it hits zero, the object is immediately deallocated. (The separate generational garbage collector you'd cover in `Garbage_Collection.md` exists only to catch **reference cycles** that ref-counting alone can't free.)
-- **`ob_type`** — a pointer to the object's type object, which is itself a `PyObject` (specifically a `PyTypeObject`) describing the class: its methods, its `__dict__`, its MRO. This is what `type(obj)` actually returns, and why "everything is an object, including classes" is literally true at the C level — classes are instances of `type`.
+- **`ob_refcnt`** — The reference count. This is the mechanism `sys.getrefcount(obj)` reads, and it's the foundation of CPython's **primary** garbage-collection strategy: when it hits zero, the object is immediately deallocated.
+- **`ob_type`** — A pointer to the object's type object, which is itself a `PyObject` (specifically a `PyTypeObject`) describing the class: its methods, its `__dict__`, its MRO. This is what `type(obj)` actually returns, and why "everything is an object, including classes" is literally true at the C level — classes are instances of `type`.
 
 ```python
 import sys
 
 x = []
-print(sys.getrefcount(x))   # ref count (includes the temporary ref from the call itself)
-print(type(x) is list)        # True — ob_type points at the `list` type object
+print(sys.getrefcount(x))      # ref count (includes the temporary ref from the call itself)
+print(type(x) is list)         # True — ob_type points at the `list` type object
 print(type(list) is type)      # True — even `list` itself is an instance of `type`
 ```
-
-**Why this matters for interviews:** "How does Python manage memory?" has two correct layers to an answer — reference counting (immediate, deterministic, object-model level) *and* the generational cycle collector (periodic, handles what ref-counting structurally cannot: cycles like `a.x = b; b.x = a`).
 
 ## 2. Memory Allocation — `pymalloc`
 
 Typical Python programs allocate huge numbers of small, short-lived objects (every `int`, every small `list`, every stack frame). Calling the OS-level `malloc()` for each one would be far too slow and fragment memory badly. CPython instead uses a custom small-object allocator, **`pymalloc`**, layered in three tiers:
 
-- **Arenas** — large chunks (256 KB) requested directly from the OS.
-- **Pools** — each arena is divided into pools (4 KB each), and each pool is dedicated to allocations of one specific *size class*.
-- **Blocks** — each pool is divided into fixed-size blocks; a request for, say, a 32-byte object is served from the pool whose blocks are sized for that class.
+- **Arenas** — Large chunks (256 KB) requested directly from the OS.
+- **Pools** — Each arena is divided into pools (4 KB each), and each pool is dedicated to allocations of one specific *size class*.
+- **Blocks** — Each pool is divided into fixed-size blocks; a request for, say, a 32-byte object is served from the pool whose blocks are sized for that class.
 
 `pymalloc` handles objects **under ~512 bytes**; larger allocations fall through to the system allocator directly. This tiered design means small-object allocation and deallocation are extremely cheap — mostly bookkeeping, no syscalls — which is a big part of why Python's object churn (creating/discarding tons of small objects) doesn't tank performance as badly as it otherwise would.
 
@@ -88,7 +86,6 @@ This is a nice concrete answer if asked "how does Python store Unicode strings i
 
 ## Notes & Gotchas Worth Knowing for Interviews
 
-- **Reference counting is the primary GC mechanism; the generational collector is a supplement** that exists specifically for reference cycles — a strong answer distinguishes these two layers instead of conflating them.
 - **`type` is itself an instance of `type`** — the "everything is an object" claim bottoms out at `type(type) is type`, a fun one-liner to demonstrate real understanding.
 - **Small-object allocation is cheap by design (`pymalloc`)** — this is part of why "just create more small objects" is a less costly habit in Python than in a language without a tiered small-object allocator, though it's still not free.
 - **Key-sharing dicts** are why instances of a simple class are more memory-efficient than a raw per-instance dict with no shared structure would suggest.
