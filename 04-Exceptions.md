@@ -29,9 +29,32 @@ BaseException
       └── StopIteration
 ```
 
-**Note:** `SystemExit`, `KeyboardInterrupt`, and `GeneratorExit` inherit from `BaseException`, **not** `Exception`, specifically so that a broad `except Exception:` won't accidentally swallow a user's Ctrl+C or a clean `sys.exit()` call. This is the main reason a **bare `except:`** (which catches `BaseException`) is considered bad practice — it also catches these control-flow signals.
+**Why `SystemExit`, `KeyboardInterrupt`, and `GeneratorExit` aren't under `Exception`**
 
-**Common exceptions not drawn above:** `ImportError` (and its subclass `ModuleNotFoundError`), `AssertionError`, `EOFError`, `MemoryError`, `SyntaxError`, `StopAsyncIteration`, `UnicodeError` (a `ValueError` subclass, so `UnicodeDecodeError` is one too), `json.JSONDecodeError` (also a `ValueError`), and the `Warning` family. `IOError` is simply another name for `OSError`. Note that `asyncio.CancelledError` inherits from `BaseException` (not `Exception`) since Python 3.8, so a broad `except Exception:` won't swallow task cancellation (see `20-Async-Programming.md`).
+These three inherit from `BaseException`, not `Exception`. That way, a broad `except Exception:` won't accidentally catch the user pressing Ctrl+C or a normal `sys.exit()` call.
+
+**Why a bare `except:` is bad practice**
+
+A bare `except:` catches everything, including `BaseException`. That means it also swallows these exit and interrupt signals, so your program can become hard to stop.
+
+**Other exceptions worth knowing**
+
+- `ImportError`, with its subclass `ModuleNotFoundError`
+- `AssertionError`
+- `EOFError`
+- `MemoryError`
+- `SyntaxError`
+- `StopAsyncIteration`
+- `UnicodeError`, a kind of `ValueError`, so `UnicodeDecodeError` is also a `ValueError`
+- `json.JSONDecodeError`, also a `ValueError`
+- The `Warning` family
+
+**Two more things to remember**
+
+- `IOError` is just another name for `OSError`.
+- Since Python 3.8, `asyncio.CancelledError` inherits from `BaseException`. So `except Exception:` won't swallow task cancellation either.
+
+**One-line rule:** catch `Exception` (or something more specific), never a bare `except:`, so Ctrl+C, `sys.exit()`, and task cancellation still work.
 
 ## 2. Basic try/except/else/finally
 
@@ -86,22 +109,31 @@ except ValueError:
 ```
 
 ### Exception Chaining — `raise ... from ...`
+Exception chaining links a new exception to the one that caused it, so the traceback shows both.
+#### Three forms
 
-When you raise a new exception while handling another, Python automatically records the original as `__context__`. Using `raise X from Y` makes that link explicit (`__cause__`) and produces a clearer traceback ("The above exception was the direct cause of...").
+- **Implicit:** raising inside an `except` block automatically sets `__context__`. Traceback says "During handling of the above exception, another exception occurred."
+- **Explicit (`raise X from e`):** sets `__cause__`. Traceback says "The above exception was the direct cause of the following exception." Use it to wrap low-level errors in domain errors.
+- **Suppressed (`raise X from None`):** hides the original from the traceback (`__suppress_context__ = True`), but `__context__` is still stored.
 
+**Example**
 ```python
-try:
-    parse(data)
-except ValueError as e:
-    raise RuntimeError("failed to process record") from e
-```
+class ConfigError(Exception):
+    pass
 
-To deliberately hide the chain (e.g., in a public API where the internal cause is noise):
-```python
-raise RuntimeError("failed") from None
+def load_port(value):
+    try:
+        return int(value)
+    except ValueError as e:
+        raise ConfigError(f"Invalid port: {value!r}") from e
 ```
+#### Remember
 
-### Adding Context Without Changing the Exception — `add_note()` (3.11+)
+- Use `from e` when translating errors, so debugging info isn't lost.
+- Use `from None` only when the original is pure noise to the caller.
+- Wrapping without `from` works but makes it look like a bug in your handler.
+
+### Adding Context Without Changing the Exception — `add_note()`
 
 `add_note()` attaches extra text that shows up in the traceback, which is handy for annotating an error as it passes through a layer and then re-raising it unchanged:
 
@@ -262,9 +294,9 @@ next(it)         # raises StopIteration
 next(it, "done")  # "done" — pass a default to avoid the exception
 ```
 
-Since PEP 479 (Python 3.7+), an unhandled `StopIteration` escaping a generator body is converted into a `RuntimeError`, to prevent it from silently terminating an enclosing `for` loop unexpectedly.
+An unhandled `StopIteration` escaping a generator body is converted into a `RuntimeError`, to prevent it from silently terminating an enclosing `for` loop unexpectedly.
 
-## 10. Exception Groups (Python 3.11+)
+## 10. Exception Groups
 
 For situations where multiple unrelated exceptions need to be raised together (e.g., concurrent tasks each failing independently):
 
@@ -277,7 +309,7 @@ except* TypeError as eg:
     print("caught TypeErrors:", eg.exceptions)
 ```
 
-`except*` (new syntax) matches exceptions by type **within** the group without stopping at the first match, unlike a normal `except`.
+`except*` matches exceptions by type within the group without stopping at the first match, unlike a normal `except`.
 
 ## Notes & Gotchas
 
