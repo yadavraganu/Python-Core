@@ -29,15 +29,15 @@ BaseException
       └── StopIteration
 ```
 
-**Why `SystemExit`, `KeyboardInterrupt`, and `GeneratorExit` aren't under `Exception`**
+#### Why `SystemExit`, `KeyboardInterrupt`, and `GeneratorExit` aren't under `Exception`
 
 These three inherit from `BaseException`, not `Exception`. That way, a broad `except Exception:` won't accidentally catch the user pressing Ctrl+C or a normal `sys.exit()` call.
 
-**Why a bare `except:` is bad practice**
+#### Why a bare `except:` is bad practice
 
 A bare `except:` catches everything, including `BaseException`. That means it also swallows these exit and interrupt signals, so your program can become hard to stop.
 
-**Other exceptions worth knowing**
+#### Other exceptions worth knowing
 
 - `ImportError`, with its subclass `ModuleNotFoundError`
 - `AssertionError`
@@ -49,7 +49,7 @@ A bare `except:` catches everything, including `BaseException`. That means it al
 - `json.JSONDecodeError`, also a `ValueError`
 - The `Warning` family
 
-**Two more things to remember**
+#### Two more things to remember
 
 - `IOError` is just another name for `OSError`.
 - Since Python 3.8, `asyncio.CancelledError` inherits from `BaseException`. So `except Exception:` won't swallow task cancellation either.
@@ -75,7 +75,7 @@ finally:
 - **`else`** — runs only when no exception occurred; keeps the "happy path" separate from error handling and from the code that might raise.
 - **`finally`** — always runs, used for guaranteed cleanup (closing files, releasing locks), even if the `try` block returns or re-raises.
 
-### Catching Multiple / Specific Exceptions
+#### Catching Multiple / Specific Exceptions
 
 ```python
 try:
@@ -234,8 +234,6 @@ class Suppressor:
 with Suppressor():
     raise ValueError("this will be silently suppressed")
 ```
-
-**Don't write it this way in real code.** Returning `True` unconditionally swallows *every* exception, including unrelated bugs: `with Suppressor(): undefined_name` silently hides a `NameError` too. Check `exc_type` and suppress only the exceptions you intend to handle, or use `contextlib.suppress(FileNotFoundError)`. See `13-Context-Manager.md` for the full rules.
 
 ## 6. EAFP vs. LBYL
 
