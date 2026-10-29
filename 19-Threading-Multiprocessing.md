@@ -1,8 +1,8 @@
-Python multithreading lets you run multiple threads (smaller units of a process) concurrently, ideal for tasks that involve *waiting* — network requests, file I/O (**I/O-bound tasks**). Due to Python's **Global Interpreter Lock (GIL)**, though, it does not provide true parallelism for **CPU-bound** tasks within a single CPython process — that's what **multiprocessing** (covered in Part 2) is for.
+Python multithreading lets you run multiple threads (smaller units of a process) concurrently, ideal for tasks that involve *waiting* — network requests, file I/O (**I/O-bound tasks**). Due to Python's **Global Interpreter Lock (GIL)**, though, it does not provide true parallelism for **CPU-bound** tasks within a single CPython process — that's what **multiprocessing** is for.
 
-# Part 1 — Threading
+# Threading
 
-## The Basics: What is a Thread?
+## What is a Thread?
 
 Think of a program as a cook in a kitchen (a **process**), following a recipe.
 
@@ -11,7 +11,7 @@ Think of a program as a cook in a kitchen (a **process**), following a recipe.
 
 A thread is a separate flow of execution. Threads within the same process **share the same memory space** — lightweight, but requiring careful management to avoid conflicts.
 
-### The Global Interpreter Lock (GIL)
+#### The Global Interpreter Lock (GIL)
 
 The **GIL** is a mutex in CPython allowing only one thread to execute Python bytecode at a time within a single process. This is why multithreading isn't effective for CPU-bound tasks. However, when a thread is waiting on an external operation (file read, network response), it **releases the GIL**, letting other threads run — perfect for **I/O-bound** work.
 
