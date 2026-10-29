@@ -180,7 +180,7 @@ producer_thread.join(); consumer_thread.join()
 print("All work is done.")
 ```
 
-## Expert Level: `ThreadPoolExecutor`
+## ThreadPoolExecutor
 
 `concurrent.futures.ThreadPoolExecutor` gives a modern, high-level interface — submit tasks, get back `Future` objects instead of managing `start()`/`join()` yourself.
 
@@ -213,7 +213,7 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
 * **`threading.Semaphore`** — like a lock, but allows N threads to hold it simultaneously; useful for capping concurrent access to a limited resource (e.g., a pool of DB connections).
 * **`threading.Condition`** — combines a lock with the ability to wait for/notify about a specific condition being met (`wait()`, `notify()`, `notify_all()`) — the building block behind more complex producer-consumer patterns than a plain `Queue` covers.
 
-# Part 2 — Multiprocessing
+# Multiprocessing
 
 Since threads share one GIL-limited interpreter, they can't achieve real parallelism for CPU-bound work (tight loops, number crunching, image processing). The `multiprocessing` module sidesteps the GIL entirely by running code in **separate processes** — each with its **own Python interpreter and own memory space** — achieving genuine parallel execution across CPU cores.
 
